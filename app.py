@@ -164,7 +164,7 @@ def build_agents_from_config(configs: list[dict]) -> list:
 
 
 def render_history(env):
-    """渲染聊天历史。"""
+    """渲染全局聊天历史（上帝视角，用于观察 LLM 讨论进展）。"""
     for entry in env.global_history:
         agent = env.get_agent(entry["agent_id"])
         color = AGENT_COLORS[(entry["agent_id"] - 1) % len(AGENT_COLORS)]
@@ -172,6 +172,27 @@ def render_history(env):
         with st.chat_message(name=entry["agent_name"], avatar=role_icon):
             st.markdown(f"**{color} {entry['agent_name']}** (第{entry['round']}轮)")
             st.markdown(entry["content"])
+
+
+def render_agent_perspective(env, agent):
+    """渲染人类 Agent 的专属可见上下文视角。
+
+    严格等价于 build_messages_for_agent 的输出，人类与 LLM 看到的
+    信息完全一致，不存在上帝视角。
+    """
+    messages = env.build_messages_for_agent(agent)
+    color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
+
+    for msg in messages:
+        if msg["role"] == "system":
+            continue
+        elif msg["role"] == "assistant":
+            with st.chat_message(name=agent.name, avatar="🧑"):
+                st.markdown(f"**{color} {agent.name}** (你的历史发言)")
+                st.markdown(msg["content"])
+        elif msg["role"] == "user":
+            with st.chat_message(name="讨论进展", avatar="📋"):
+                st.markdown(msg["content"])
 
 
 def render_status(env):
@@ -239,26 +260,16 @@ def main():
 
     render_status(env)
     st.divider()
-    render_history(env)
-
-    if env.state == EnvState.FINISHED:
-        if not st.session_state.discussion_over:
-            log_path = env.save_log()
-            st.session_state.discussion_over = True
-            st.success(f"讨论结束！日志已保存至: {log_path}")
-        else:
-            st.success("讨论已结束。")
-
-        if st.button("开始新讨论"):
-            st.session_state.started = False
-            st.session_state.env = None
-            st.session_state.discussion_over = False
-            st.rerun()
-        return
 
     if env.state == EnvState.WAITING_HUMAN:
         agent = env._get_current_agent()
-        st.info(f"等待 **{agent.name}** 输入（第{env.current_round}轮）")
+        st.subheader(f"🧑 {agent.name} 的视角（第{env.current_round}轮）")
+        render_agent_perspective(env, agent)
+
+        with st.expander("📜 查看完整讨论记录（上帝视角）"):
+            render_history(env)
+
+        st.info(f"轮到 **{agent.name}** 发言，请根据上方的讨论上下文输入你的观点。")
         with st.form("human_input_form"):
             user_input = st.text_area(
                 f"{agent.name} 的发言",
@@ -272,13 +283,29 @@ def main():
                 st.rerun()
             elif submitted:
                 st.warning("发言内容不能为空！")
+    else:
+        render_history(env)
 
-    elif env.state in (EnvState.WAITING_LLM, EnvState.ROUND_COMPLETE):
-        agent = env._get_current_agent()
-        if st.button(f"下一步: {agent.name} 发言（第{env.current_round}轮）", type="primary"):
-            with st.spinner(f"{agent.name} 正在思考..."):
-                env.step()
-            st.rerun()
+        if env.state == EnvState.FINISHED:
+            if not st.session_state.discussion_over:
+                log_path = env.save_log()
+                st.session_state.discussion_over = True
+                st.success(f"讨论结束！日志已保存至: {log_path}")
+            else:
+                st.success("讨论已结束。")
+
+            if st.button("开始新讨论"):
+                st.session_state.started = False
+                st.session_state.env = None
+                st.session_state.discussion_over = False
+                st.rerun()
+
+        elif env.state in (EnvState.WAITING_LLM, EnvState.ROUND_COMPLETE):
+            agent = env._get_current_agent()
+            if st.button(f"下一步: {agent.name} 发言（第{env.current_round}轮）", type="primary"):
+                with st.spinner(f"{agent.name} 正在思考..."):
+                    env.step()
+                st.rerun()
 
 
 if __name__ == "__main__":

@@ -76,33 +76,34 @@ class EnvBase:
         return self.state
 
     # ------------------------------------------------------------------
-    # messages 构建（四阶段管道：Filter → Group → Render → Assemble）
+    # messages 构建（管道：Filter → Timeline Group → Render → Assemble）
     # ------------------------------------------------------------------
 
     def build_messages_for_agent(self, agent: AgentBase) -> list[dict]:
         """为指定 Agent 构建完整的 OpenAI messages 列表。
 
-        严格保证 System → [User → Assistant]* → User 的交替结构。
+        基于 agent 个人时间线（以自身发言为锚点）严格保证
+        System → [User → Assistant]* → User 的因果交替结构。
         """
         messages: list[dict] = [{"role": "system", "content": agent.system_prompt}]
 
-        grouped = self._group_history_by_round(agent.agent_id)
+        groups = self._build_timeline_groups(agent.agent_id)
 
-        if not grouped:
+        if not groups:
             messages.append({
                 "role": "user",
                 "content": self.format_initial_prompt(agent.agent_id),
             })
             return messages
 
-        for round_num in sorted(grouped.keys()):
-            others = grouped[round_num]["others"]
-            mine = grouped[round_num]["mine"]
+        for turn_num, group in enumerate(groups, 1):
+            others = group["others"]
+            mine = group["mine"]
 
             if others:
                 messages.append({
                     "role": "user",
-                    "content": self.format_round_prompt(round_num, others, agent.agent_id),
+                    "content": self.format_round_prompt(turn_num, others, agent.agent_id),
                 })
             else:
                 messages.append({
@@ -116,60 +117,66 @@ class EnvBase:
         return messages
 
     # ------------------------------------------------------------------
-    # 分组（子类可重写）
+    # 时间线分组（子类可重写）
     # ------------------------------------------------------------------
 
-    def _group_history_by_round(self, agent_id: int) -> dict[int, dict]:
-        """将可见历史按轮次分组为 {round: {"others": [...], "mine": str|None}}。
+    def _build_timeline_groups(self, agent_id: int) -> list[dict]:
+        """基于 agent 个人时间线构建消息分组。
 
-        "others" 来自 get_visible_messages 中非自身条目；
-        "mine" 直接从 global_history 中提取自身发言。
-        子类可重写以实现不同的分组策略（如 BrainWrite 逐轮可见性重建）。
+        沿 global_history 时间顺序扫描，以自身发言为锚点切分：
+        锚点之间的所有可见他人发言聚合为一个 "others" 块。
+
+        返回 [{"others": [entry...], "mine": str|None}, ...] 有序列表。
+        子类可重写（如 BrainWrite 需要逐轮可见性重建）。
         """
         visible = self.get_visible_messages(agent_id)
+        visible_keys = {
+            (e["agent_id"], e["round"])
+            for e in visible
+            if e["agent_id"] != agent_id
+        }
 
-        others_by_round: dict[int, list[dict]] = {}
-        for entry in visible:
-            if entry["agent_id"] != agent_id:
-                others_by_round.setdefault(entry["round"], []).append(entry)
+        groups: list[dict] = []
+        current_others: list[dict] = []
 
-        mine_by_round: dict[int, str] = {}
         for entry in self.global_history:
             if entry["agent_id"] == agent_id:
-                mine_by_round[entry["round"]] = entry["content"]
+                groups.append({"others": current_others, "mine": entry["content"]})
+                current_others = []
+            elif (entry["agent_id"], entry["round"]) in visible_keys:
+                current_others.append(entry)
 
-        all_rounds = sorted(set(list(others_by_round.keys()) + list(mine_by_round.keys())))
-        result: dict[int, dict] = {}
-        for r in all_rounds:
-            result[r] = {
-                "others": others_by_round.get(r, []),
-                "mine": mine_by_round.get(r, None),
-            }
+        if current_others:
+            groups.append({"others": current_others, "mine": None})
+        elif not groups:
+            groups.append({"others": [], "mine": None})
+        elif self.current_round <= self.max_rounds:
+            groups.append({"others": [], "mine": None})
 
-        if self.current_round <= self.max_rounds and self.current_round not in result:
-            result[self.current_round] = {
-                "others": others_by_round.get(self.current_round, []),
-                "mine": mine_by_round.get(self.current_round),
-            }
-
-        return result
+        return groups
 
     # ------------------------------------------------------------------
     # 渲染 Hook（子类重写以定制 Prompt 语义）
     # ------------------------------------------------------------------
 
-    def format_round_prompt(self, round_num: int, others_entries: list[dict], agent_id: int) -> str:
-        """将同轮次的他人发言渲染为一条 User Prompt。子类重写此方法注入环境语义。"""
+    def format_round_prompt(self, turn_num: int, others_entries: list[dict], agent_id: int) -> str:
+        """将一组他人发言渲染为一条 User Prompt。
+
+        turn_num 为该 agent 的第几次发言轮（1-based），子类可据此定制措辞。
+        """
         lines = []
         for entry in others_entries:
             speaker = self.get_agent_name(entry["agent_id"])
             if self.get_agent(entry["agent_id"]).is_human:
                 speaker = f"人类专家 {speaker}"
             lines.append(f"- {speaker} 说：{entry['content']}")
-        return f"在第 {round_num} 轮讨论中，你听到了以下发言：\n" + "\n".join(lines)
+        body = "\n".join(lines)
+        if turn_num == 1:
+            return f"在讨论中，以下参与者率先发表了观点：\n{body}"
+        return f"在你上次发言后，以下参与者发表了新的观点：\n{body}"
 
     def format_initial_prompt(self, agent_id: int) -> str:
-        """当某轮次无他人可见发言时的默认 User 提示。子类可重写。"""
+        """当无他人可见发言时的默认 User 提示。子类可重写。"""
         return "现在请你率先发言，针对讨论主题分享你的观点和思考。"
 
     # ------------------------------------------------------------------

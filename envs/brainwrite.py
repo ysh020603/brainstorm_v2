@@ -36,14 +36,14 @@ class BrainWrite(EnvBase):
         return visible
 
     # ------------------------------------------------------------------
-    # 逐轮可见性重建（覆盖基类的按消息轮次分组）
+    # 逐轮可见性重建（覆盖基类的时间线分组）
     # ------------------------------------------------------------------
 
-    def _group_history_by_round(self, agent_id: int) -> dict[int, dict]:
+    def _build_timeline_groups(self, agent_id: int) -> list[dict]:
         """BrainWrite 的可见性是滑动窗口——每轮看到的前任不同。
 
-        按 agent 实际发言轮次重建：第 R 轮发言前，模拟 current_round=R
-        的环形可见性规则，收集该轮实际可见的 others。
+        不能使用基类的时间线扫描（全局历史中消息的物理顺序与 BrainWrite
+        的环形传递因果关系不一致），需要按 agent 实际发言轮次逐轮重建。
         """
         n = len(self.agents)
         agent_ids = [a.agent_id for a in self.agents]
@@ -54,10 +54,10 @@ class BrainWrite(EnvBase):
             if entry["agent_id"] == agent_id:
                 mine_by_round[entry["round"]] = entry["content"]
 
-        result: dict[int, dict] = {}
+        groups: list[dict] = []
 
         if 1 in mine_by_round or self.current_round == 1:
-            result[1] = {"others": [], "mine": mine_by_round.get(1)}
+            groups.append({"others": [], "mine": mine_by_round.get(1)})
 
         upper = min(self.current_round, self.max_rounds) + 1
         for speaking_round in range(2, upper):
@@ -69,18 +69,18 @@ class BrainWrite(EnvBase):
                 for entry in self.global_history:
                     if entry["agent_id"] == source_id and entry["round"] == r:
                         others.append(entry)
-            result[speaking_round] = {
+            groups.append({
                 "others": others,
                 "mine": mine_by_round.get(speaking_round),
-            }
+            })
 
-        return result
+        return groups
 
     # ------------------------------------------------------------------
     # Prompt 渲染
     # ------------------------------------------------------------------
 
-    def format_round_prompt(self, round_num: int, others_entries: list[dict], agent_id: int) -> str:
+    def format_round_prompt(self, turn_num: int, others_entries: list[dict], agent_id: int) -> str:
         lines = []
         for entry in others_entries:
             speaker = self.get_agent_name(entry["agent_id"])
@@ -88,7 +88,7 @@ class BrainWrite(EnvBase):
                 speaker = f"人类专家 {speaker}"
             lines.append(f"- {speaker} 的草稿：{entry['content']}")
         return (
-            f"在第 {round_num} 轮讨论中，你收到了传递过来的脑力书写草稿。"
+            f"在第 {turn_num} 轮讨论中，你收到了传递过来的脑力书写草稿。"
             f"请仔细阅读前人的思路，并在此基础上继续延伸你的专业见解。\n"
             f"草稿内容如下：\n" + "\n".join(lines)
         )

@@ -24,10 +24,10 @@ class LeaderWorker(EnvBase):
         return agent_id in self.leader_ids
 
     def _prepare_round_order(self):
-        """先 Worker 后 Leader。"""
-        workers = [a for a in self.agents if not self._is_leader(a.agent_id)]
+        """先 Leader 后 Worker：Leader 负责定调，Worker 据此执行。"""
         leaders = [a for a in self.agents if self._is_leader(a.agent_id)]
-        self.round_order = workers + leaders
+        workers = [a for a in self.agents if not self._is_leader(a.agent_id)]
+        self.round_order = leaders + workers
 
     def get_visible_messages(self, agent_id: int) -> list[dict]:
         """双向隔离：Worker 只看 Leader 发言，Leader 只看 Worker 发言。"""
@@ -45,7 +45,7 @@ class LeaderWorker(EnvBase):
     # Prompt 渲染（Leader / Worker 双视角）
     # ------------------------------------------------------------------
 
-    def format_round_prompt(self, round_num: int, others_entries: list[dict], agent_id: int) -> str:
+    def format_round_prompt(self, turn_num: int, others_entries: list[dict], agent_id: int) -> str:
         if self._is_leader(agent_id):
             names = []
             lines = []
@@ -56,9 +56,14 @@ class LeaderWorker(EnvBase):
                 names.append(speaker)
                 lines.append(f"- {speaker} 汇报称：{entry['content']}")
             names_str = "、".join(names)
+            if turn_num == 1:
+                return (
+                    f"你收到了来自组员 {names_str} 的初步分析报告。"
+                    f"作为 Leader，请综合以下信息给出你的指导意见：\n" + "\n".join(lines)
+                )
             return (
-                f"在第 {round_num} 轮汇总中，你收到了来自组员 {names_str} 的分析报告。"
-                f"作为 Leader，请综合以下信息给出你的指导意见：\n" + "\n".join(lines)
+                f"在你上次指导后，组员 {names_str} 提交了更新的分析报告。"
+                f"作为 Leader，请综合以下信息给出进一步的指导意见：\n" + "\n".join(lines)
             )
         else:
             lines = []
@@ -67,8 +72,13 @@ class LeaderWorker(EnvBase):
                 if self.get_agent(entry["agent_id"]).is_human:
                     speaker = f"人类专家 {speaker}"
                 lines.append(f"- {speaker} 的指导：{entry['content']}")
+            if turn_num == 1:
+                return (
+                    f"你收到了来自 Leader 的战略指导。"
+                    f"请根据以下指导制定你的专业方案：\n" + "\n".join(lines)
+                )
             return (
-                f"在第 {round_num} 轮推进中，你收到了来自 Leader 的最新战略指导。"
+                f"在你上次汇报后，Leader 给出了新的战略指导。"
                 f"请根据以下指导调整你的专业方案：\n" + "\n".join(lines)
             )
 
