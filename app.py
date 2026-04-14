@@ -6,6 +6,7 @@
 
 import sys
 import os
+import random
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,20 +38,45 @@ AGENT_COLORS = [
     "🔵", "🟢", "🟠", "🟣", "🔴", "🟡", "⚪", "🟤",
 ]
 
+# ── 静态 API 配置池（5 份相同配置，后台随机无放回分配给 LLM Agent） ──
+API_CONFIG_POOL = [
+    {
+        "api_key": "EMPTY",
+        "base_url": "http://172.18.39.164:8002/v1",
+        "model": "Qwen3-8B",
+        "temperature": 0.7,
+    }
+    for _ in range(5)
+]
+
 
 def init_session_state():
     defaults = {
         "env": None,
         "started": False,
         "discussion_over": False,
+        "pending_final_ranking": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 
+def _reset_session():
+    """清空讨论相关状态，恢复到初始配置界面。"""
+    for key in ("started", "discussion_over", "pending_final_ranking"):
+        st.session_state[key] = False
+    st.session_state["env"] = None
+    st.rerun()
+
+
 def render_sidebar():
     """侧边栏：配置讨论参数。"""
+
+    # ── 重新开始按钮（置顶） ──
+    if st.sidebar.button("🔄 重新开始", use_container_width=True):
+        _reset_session()
+
     st.sidebar.header("讨论配置")
 
     mode = st.sidebar.selectbox(
@@ -68,20 +94,32 @@ def render_sidebar():
     else:
         topic = st.sidebar.text_area("话题内容", value=TOPICS[topic_key], height=80)
 
-    max_rounds = st.sidebar.number_input("讨论轮数", min_value=1, max_value=20, value=3)
-
+    # ── Agent 总数 (3‑5)，讨论轮数默认 = Agent 总数 ──
     st.sidebar.subheader("Agent 配置")
-    num_agents = st.sidebar.number_input("Agent 总数", min_value=2, max_value=8, value=4)
+    num_agents = st.sidebar.number_input(
+        "Agent 总数", min_value=3, max_value=5, value=4,
+    )
+    max_rounds = st.sidebar.number_input(
+        "讨论轮数", min_value=1, max_value=20, value=num_agents,
+    )
+
+    # ── 单一人类 Agent 选择（下拉菜单） ──
+    human_agent_idx = st.sidebar.selectbox(
+        "人类参与者（选择第几个 Agent）",
+        options=list(range(1, num_agents + 1)),
+        format_func=lambda x: f"Agent {x}",
+        index=0,
+    )
 
     agent_configs = []
     expert_keys = list(EXPERTS.keys())
 
     for i in range(num_agents):
-        with st.sidebar.expander(f"Agent {i + 1}", expanded=(i == 0)):
-            is_human = st.checkbox(f"人类参与者", key=f"human_{i}")
+        is_human = (i + 1 == human_agent_idx)
+        label = f"Agent {i + 1} {'👤 人类' if is_human else '🤖 LLM'}"
+        with st.sidebar.expander(label, expanded=(i == 0)):
             name = st.text_input("名称", value=f"专家{i + 1}", key=f"name_{i}")
 
-            default_expert = expert_keys[i % len(expert_keys)]
             role_source = st.selectbox(
                 "角色来源",
                 options=["预设角色", "自定义"],
@@ -98,43 +136,25 @@ def render_sidebar():
             else:
                 role = st.text_area("角色背景", value="", key=f"role_{i}", height=60)
 
-            if not is_human:
-                api_key = st.text_input("API Key", type="password", key=f"api_key_{i}")
-                base_url = st.text_input(
-                    "Base URL",
-                    value="https://open.bigmodel.cn/api/paas/v4",
-                    key=f"base_url_{i}",
-                )
-                model = st.text_input("模型", value="glm-4-flash-250414", key=f"model_{i}")
-                temperature = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1, key=f"temp_{i}")
-            else:
-                api_key = base_url = model = None
-                temperature = None
-
             agent_configs.append({
                 "is_human": is_human,
                 "name": name,
                 "role": role,
-                "api_key": api_key,
-                "base_url": base_url,
-                "model": model,
-                "temperature": temperature,
             })
 
-    leader_ids = []
-    if mode == "leader_worker":
-        st.sidebar.subheader("Leader 指定")
-        for i in range(num_agents):
-            if st.sidebar.checkbox(
-                f"{agent_configs[i]['name']} 是 Leader",
-                key=f"leader_{i}",
-            ):
-                leader_ids.append(i + 1)
+    # Leader-Worker 模式下人类自动为 Leader，无需手动配置
+    leader_ids = [human_agent_idx] if mode == "leader_worker" else []
 
     return mode, topic, max_rounds, agent_configs, leader_ids
 
 
+# ── 从配置池无放回随机抽取，构建 Agent ──
+
 def build_agents_from_config(configs: list[dict]) -> list:
+    """构建 Agent 列表。LLM Agent 的 API 配置从 API_CONFIG_POOL 随机无放回抽取。"""
+    pool = [cfg.copy() for cfg in API_CONFIG_POOL]
+    random.shuffle(pool)
+
     agents = []
     for i, cfg in enumerate(configs):
         agent_id = i + 1
@@ -145,26 +165,74 @@ def build_agents_from_config(configs: list[dict]) -> list:
                 role_background=cfg["role"],
             ))
         else:
-            api_config = {
-                "api_key": cfg["api_key"],
-                "base_url": cfg["base_url"],
-            }
-            inference_config = {"model": cfg["model"]}
-            if cfg["temperature"] is not None:
-                inference_config["temperature"] = cfg["temperature"]
-
+            api_cfg = pool.pop()
             agents.append(AgentLLM(
                 agent_id=agent_id,
                 name=cfg["name"],
                 role_background=cfg["role"],
-                api_config=api_config,
-                inference_config=inference_config,
+                api_config={
+                    "api_key": api_cfg["api_key"],
+                    "base_url": api_cfg["base_url"],
+                },
+                inference_config={
+                    "model": api_cfg["model"],
+                    "temperature": api_cfg["temperature"],
+                },
             ))
     return agents
 
 
+# ── LLM 自动连续发言引擎 ──
+
+def auto_advance_llm(env):
+    """连续调用 env.step()，直到遇到人类回合或讨论结束。"""
+    while env.state not in (EnvState.WAITING_HUMAN, EnvState.FINISHED):
+        env.step()
+
+
+# ── BrainWrite 纸条路线渲染 ──
+
+def render_brainwrite_history(env):
+    """BrainWrite 上帝视角：按"纸条路线"分组展示，呈现链式接力。"""
+    n = len(env.agents)
+    agent_ids = [a.agent_id for a in env.agents]
+
+    paper_slips: dict[int, list[dict]] = {idx: [] for idx in range(n)}
+
+    for entry in env.global_history:
+        holder_idx = agent_ids.index(entry["agent_id"])
+        r = entry["round"]
+        origin_idx = (holder_idx - (r - 1)) % n
+        paper_slips[origin_idx].append(entry)
+
+    for origin_idx in range(n):
+        origin_agent = env.agents[origin_idx]
+        entries = paper_slips[origin_idx]
+        if not entries:
+            continue
+
+        color = AGENT_COLORS[origin_idx % len(AGENT_COLORS)]
+        with st.expander(
+            f"{color} 纸条路线 {origin_idx + 1}（由 {origin_agent.name} 发起）",
+            expanded=True,
+        ):
+            for entry in sorted(entries, key=lambda e: e["round"]):
+                agent = env.get_agent(entry["agent_id"])
+                role_icon = "🧑" if agent.is_human else "🤖"
+                entry_color = AGENT_COLORS[(entry["agent_id"] - 1) % len(AGENT_COLORS)]
+                with st.chat_message(name=entry["agent_name"], avatar=role_icon):
+                    st.markdown(
+                        f"**{entry_color} {entry['agent_name']}** (第{entry['round']}轮)"
+                    )
+                    st.markdown(entry["content"])
+
+
 def render_history(env):
-    """渲染全局聊天历史（上帝视角，用于观察 LLM 讨论进展）。"""
+    """渲染全局聊天历史（上帝视角）。BrainWrite 使用纸条路线视图。"""
+    if isinstance(env, BrainWrite):
+        render_brainwrite_history(env)
+        return
+
     for entry in env.global_history:
         agent = env.get_agent(entry["agent_id"])
         color = AGENT_COLORS[(entry["agent_id"] - 1) % len(AGENT_COLORS)]
@@ -175,11 +243,7 @@ def render_history(env):
 
 
 def render_agent_perspective(env, agent):
-    """渲染人类 Agent 的专属可见上下文视角。
-
-    严格等价于 build_messages_for_agent 的输出，人类与 LLM 看到的
-    信息完全一致，不存在上帝视角。
-    """
+    """渲染人类 Agent 的专属可见上下文视角。"""
     messages = env.build_messages_for_agent(agent)
     color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
 
@@ -212,6 +276,57 @@ def render_status(env):
         st.metric("状态", state_labels.get(env.state, str(env.state)))
 
 
+# ── 最终排名机制（所有讨论形式通用） ──
+
+def render_final_ranking_form(env):
+    """讨论结束后，人类对所有其他 Agent 进行一次总排名。
+
+    Returns True 表示排名已提交，False 表示尚未提交或校验失败。
+    """
+    others = [a for a in env.agents if not a.is_human]
+    if not others:
+        return False
+
+    st.subheader("📊 最终排名 — 综合评价其他专家表现")
+    st.info("请根据整场讨论中各位专家的综合表现进行排名（1 = 最佳）")
+
+    num_others = len(others)
+
+    with st.form("final_ranking_form"):
+        rankings = {}
+        for idx, agent in enumerate(others):
+            color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
+            rank = st.selectbox(
+                f"{color} {agent.name} 的排名",
+                options=list(range(1, num_others + 1)),
+                index=idx,
+                key=f"final_rank_{agent.agent_id}",
+            )
+            rankings[agent.agent_id] = rank
+
+        submitted = st.form_submit_button("提交排名", type="primary")
+        if submitted:
+            rank_values = list(rankings.values())
+            if len(set(rank_values)) != len(rank_values):
+                st.error("排名不能重复！请为每位专家分配不同的名次。")
+                return False
+
+            ranking_data = []
+            for agent in others:
+                ranking_data.append({
+                    "agent_id": agent.agent_id,
+                    "agent_name": agent.name,
+                    "rank": rankings[agent.agent_id],
+                })
+            ranking_data.sort(key=lambda x: x["rank"])
+
+            env.round_rankings = {"final": ranking_data}
+            st.session_state.pending_final_ranking = False
+            return True
+
+    return False
+
+
 def main():
     st.set_page_config(page_title="Brainstorm 头脑风暴", page_icon="🧠", layout="wide")
     st.title("🧠 Brainstorm 头脑风暴系统")
@@ -219,16 +334,13 @@ def main():
     init_session_state()
     mode, topic, max_rounds, agent_configs, leader_ids = render_sidebar()
 
+    # ── 尚未开始：等待用户点击"开始讨论" ──
     if not st.session_state.started:
         st.info("请在左侧配置讨论参数，然后点击下方按钮开始讨论。")
         if st.button("开始讨论", type="primary"):
             if not topic.strip():
                 st.error("请输入讨论话题！")
                 return
-            for i, cfg in enumerate(agent_configs):
-                if not cfg["is_human"] and not cfg["api_key"]:
-                    st.error(f"Agent {i + 1} ({cfg['name']}) 的 API Key 不能为空！")
-                    return
 
             agents = build_agents_from_config(agent_configs)
             env_cls = ENV_MAP[mode]
@@ -241,21 +353,24 @@ def main():
                     log_dir=os.path.join(os.path.dirname(__file__), "log_human"),
                 )
             else:
-                has_human = any(c["is_human"] for c in agent_configs)
-                log_subdir = "log_human" if has_human else "log"
                 env = env_cls(
                     agents=agents,
                     topic=topic,
                     max_rounds=max_rounds,
-                    log_dir=os.path.join(os.path.dirname(__file__), log_subdir),
+                    log_dir=os.path.join(os.path.dirname(__file__), "log_human"),
                 )
             env.init()
             st.session_state.env = env
             st.session_state.started = True
             st.session_state.discussion_over = False
+            st.session_state.pending_final_ranking = False
+
+            with st.spinner("专家们正在激烈讨论中..."):
+                auto_advance_llm(env)
             st.rerun()
         return
 
+    # ── 讨论已开始 ──
     env = st.session_state.env
 
     render_status(env)
@@ -280,6 +395,12 @@ def main():
             if submitted and user_input.strip():
                 agent.submit_input(user_input.strip())
                 env.step()
+                with st.spinner("其他专家正在激烈讨论中..."):
+                    auto_advance_llm(env)
+
+                if env.state == EnvState.FINISHED:
+                    st.session_state.pending_final_ranking = True
+
                 st.rerun()
             elif submitted:
                 st.warning("发言内容不能为空！")
@@ -287,6 +408,11 @@ def main():
         render_history(env)
 
         if env.state == EnvState.FINISHED:
+            if st.session_state.pending_final_ranking:
+                if render_final_ranking_form(env):
+                    st.rerun()
+                return
+
             if not st.session_state.discussion_over:
                 log_path = env.save_log()
                 st.session_state.discussion_over = True
@@ -295,17 +421,7 @@ def main():
                 st.success("讨论已结束。")
 
             if st.button("开始新讨论"):
-                st.session_state.started = False
-                st.session_state.env = None
-                st.session_state.discussion_over = False
-                st.rerun()
-
-        elif env.state in (EnvState.WAITING_LLM, EnvState.ROUND_COMPLETE):
-            agent = env._get_current_agent()
-            if st.button(f"下一步: {agent.name} 发言（第{env.current_round}轮）", type="primary"):
-                with st.spinner(f"{agent.name} 正在思考..."):
-                    env.step()
-                st.rerun()
+                _reset_session()
 
 
 if __name__ == "__main__":

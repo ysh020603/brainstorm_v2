@@ -272,6 +272,9 @@ class EnvBase:
             "final_messages": final_messages,
         }
 
+        if hasattr(self, "round_rankings") and self.round_rankings:
+            log_data["round_rankings"] = self.round_rankings
+
         with open(path, "w", encoding="utf-8") as f:
             json.dump(log_data, f, ensure_ascii=False, indent=2)
         return path
