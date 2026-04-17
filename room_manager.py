@@ -22,7 +22,7 @@ from envs.brainwrite import BrainWrite
 from envs.round_robin import RoundRobin
 from envs.random_env import RandomEnv
 from envs.leader_worker import LeaderWorker
-from prompts.topics import TOPICS, EXPERTS
+from prompts.topics import TOPICS
 from tools.config_loader import load_llm_config, build_agent_from_config
 
 ENV_MAP = {
@@ -92,22 +92,19 @@ def _build_agents(num_humans: int, num_llm: int, human_roles: list[str]) -> list
     """构建 Agent 列表：多个人类 + 自动抽取的 LLM。
 
     agent_id 由 EnvBase 构造函数在 shuffle 后根据列表顺序动态分配。
+    LLM 的角色严格由外部配置文件决定，不再兜底分配。
     """
     pool = _load_pool()
     agents = []
 
     for i in range(num_humans):
-        role = human_roles[i] if i < len(human_roles) else "人类专家"
+        role = human_roles[i] if i < len(human_roles) else ""
         agents.append(AgentHuman(role_background=role))
 
     sampled_keys = sample_llm_keys(pool, num_llm)
-    expert_keys = list(EXPERTS.keys())
-    random.shuffle(expert_keys)
 
-    for i, config_key in enumerate(sampled_keys):
+    for config_key in sampled_keys:
         agent = build_agent_from_config(config_key, pool)
-        if not agent.role_background:
-            agent.role_background = EXPERTS[expert_keys[i % len(expert_keys)]]
         agents.append(agent)
 
     return agents

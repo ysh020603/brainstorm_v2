@@ -1,4 +1,14 @@
+import re
+
 from openai import OpenAI
+
+_THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _clean_think_tags(text: str) -> str:
+    """剔除 <think>...</think> 块并清理首尾空白。"""
+    cleaned = _THINK_PATTERN.sub("", text)
+    return cleaned.strip()
 
 
 def call_openai(
@@ -32,4 +42,5 @@ def call_openai(
         messages=messages,
         **call_kwargs,
     )
-    return completion.choices[0].message.content
+    raw_content = completion.choices[0].message.content
+    return _clean_think_tags(raw_content)

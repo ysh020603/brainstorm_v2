@@ -18,7 +18,7 @@ from streamlit_autorefresh import st_autorefresh
 
 from agents.agent_base import EnvState
 from envs.brainwrite import BrainWrite
-from prompts.topics import TOPICS, EXPERTS
+from prompts.topics import TOPICS
 import room_manager as rm
 
 MODE_LABELS = {
@@ -166,7 +166,16 @@ def _render_create_room():
     if topic_key == "自定义":
         topic = st.text_area("输入话题", value="", height=80, key="create_topic")
     else:
-        topic = st.text_area("话题内容", value=TOPICS[topic_key], height=80, key="create_topic")
+        domain_topics = TOPICS.get(topic_key, [])
+        selected = st.selectbox(
+            "选择话题", options=domain_topics if domain_topics else ["（暂无话题）"],
+            key="create_topic_select",
+        )
+        topic = st.text_area(
+            "话题内容",
+            value=selected if domain_topics else "",
+            height=80, key="create_topic",
+        )
 
     num_humans = st.number_input(
         "人类参与者数量", min_value=2, max_value=4, value=2, key="create_num_humans",
@@ -185,24 +194,6 @@ def _render_create_room():
         key="create_max_rounds",
     )
 
-    st.subheader("人类参与者角色")
-    expert_keys = list(EXPERTS.keys())
-    human_roles = []
-    for i in range(num_humans):
-        with st.expander(f"人类 {i + 1} 角色配置", expanded=(i == 0)):
-            role_source = st.selectbox(
-                "角色来源", options=["预设角色", "自定义"], key=f"cr_role_source_{i}",
-            )
-            if role_source == "预设角色":
-                expert_choice = st.selectbox(
-                    "选择专家", options=expert_keys,
-                    index=i % len(expert_keys), key=f"cr_expert_{i}",
-                )
-                role = EXPERTS[expert_choice]
-            else:
-                role = st.text_area("角色背景", value="", key=f"cr_role_{i}", height=60)
-            human_roles.append(role)
-
     if st.button("创建房间", type="primary", key="btn_create"):
         if not topic.strip():
             st.error("请输入讨论话题！")
@@ -217,7 +208,6 @@ def _render_create_room():
             max_rounds=max_rounds,
             num_humans=num_humans,
             num_llm=num_llm,
-            human_roles=human_roles,
         )
         st.session_state.room_id = room_id
         st.session_state.phase = "claim_host"
@@ -439,6 +429,28 @@ def render_ranking():
                 st.warning(f"{agent.display_name}：等待中...")
 
 
+def _init_mp_ranking_state(others):
+    """初始化联机版排名 session_state，每个 Agent 默认分配不同名次。"""
+    if "mp_ranking_selections" not in st.session_state:
+        st.session_state.mp_ranking_selections = {
+            a.agent_id: idx + 1 for idx, a in enumerate(others)
+        }
+
+
+def _on_mp_rank_change(agent_id: int):
+    """联机版排名下拉框回调：自动交换冲突名次。"""
+    new_rank = st.session_state[f"rank_{agent_id}"]
+    sel = st.session_state.mp_ranking_selections
+    old_rank = sel.get(agent_id)
+
+    for aid, r in sel.items():
+        if aid != agent_id and r == new_rank:
+            sel[aid] = old_rank
+            break
+
+    sel[agent_id] = new_rank
+
+
 def _render_ranking_form(room, env, my_agent_id: int):
     others = [a for a in env.agents if a.agent_id != my_agent_id]
     room_id = st.session_state.room_id
@@ -449,41 +461,43 @@ def _render_ranking_form(room, env, my_agent_id: int):
         return
 
     st.subheader("📊 最终排名 — 综合评价其他专家表现")
-    st.info("请根据整场讨论中各位专家的综合表现进行排名（1 = 最佳）")
+    st.info("请根据整场讨论中各位专家的综合表现进行排名（1 = 最佳）。名次会自动联动，确保不重复。")
 
     num_others = len(others)
+    _init_mp_ranking_state(others)
 
-    with st.form("ranking_form"):
-        rankings = {}
-        for idx, agent in enumerate(others):
-            color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
-            role_icon = "🧑" if agent.is_human else "🤖"
-            rank = st.selectbox(
-                f"{color} {role_icon} {agent.display_name} 的排名",
-                options=list(range(1, num_others + 1)),
-                index=idx,
-                key=f"rank_{agent.agent_id}",
-            )
-            rankings[agent.agent_id] = rank
+    for agent in others:
+        color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
+        role_icon = "🧑" if agent.is_human else "🤖"
+        current_rank = st.session_state.mp_ranking_selections[agent.agent_id]
+        st.selectbox(
+            f"{color} {role_icon} {agent.display_name} 的排名",
+            options=list(range(1, num_others + 1)),
+            index=current_rank - 1,
+            key=f"rank_{agent.agent_id}",
+            on_change=_on_mp_rank_change,
+            args=(agent.agent_id,),
+        )
 
-        submitted = st.form_submit_button("提交排名", type="primary")
-        if submitted:
-            rank_values = list(rankings.values())
-            if len(set(rank_values)) != len(rank_values):
-                st.error("排名不能重复！请为每位专家分配不同的名次。")
-                return
+    if st.button("提交排名", type="primary"):
+        rankings = st.session_state.mp_ranking_selections
+        rank_values = list(rankings.values())
+        if len(set(rank_values)) != len(rank_values):
+            st.error("排名不能重复！请为每位专家分配不同的名次。")
+            return
 
-            ranking_data = []
-            for agent in others:
-                ranking_data.append({
-                    "position": agent.agent_id,
-                    "config_key": agent.config_key,
-                    "rank": rankings[agent.agent_id],
-                })
-            ranking_data.sort(key=lambda x: x["rank"])
+        ranking_data = []
+        for agent in others:
+            ranking_data.append({
+                "position": agent.agent_id,
+                "config_key": agent.config_key,
+                "rank": rankings[agent.agent_id],
+            })
+        ranking_data.sort(key=lambda x: x["rank"])
 
-            rm.submit_ranking(room_id, my_agent_id, ranking_data)
-            st.rerun()
+        rm.submit_ranking(room_id, my_agent_id, ranking_data)
+        del st.session_state["mp_ranking_selections"]
+        st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════

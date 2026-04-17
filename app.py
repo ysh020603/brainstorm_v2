@@ -21,7 +21,7 @@ from envs.brainwrite import BrainWrite
 from envs.round_robin import RoundRobin
 from envs.random_env import RandomEnv
 from envs.leader_worker import LeaderWorker
-from prompts.topics import TOPICS, EXPERTS
+from prompts.topics import TOPICS
 from tools.config_loader import load_llm_config, build_agent_from_config
 
 ENV_MAP = {
@@ -53,6 +53,9 @@ def init_session_state():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    if "topics_pool" not in st.session_state:
+        import copy
+        st.session_state.topics_pool = copy.deepcopy(TOPICS)
 
 
 def _reset_session():
@@ -111,14 +114,48 @@ def render_sidebar():
         format_func=lambda x: MODE_LABELS[x],
     )
 
+    topics_pool = st.session_state.topics_pool
+    domain_keys = list(topics_pool.keys())
+
+    if st.sidebar.button("🎲 随机抽取话题"):
+        all_topics = [t for ts in topics_pool.values() for t in ts]
+        if all_topics:
+            st.session_state["random_topic"] = random.choice(all_topics)
+        else:
+            st.sidebar.warning("话题池为空，无法抽取！")
+
     topic_key = st.sidebar.selectbox(
         "预设话题",
-        options=["自定义"] + list(TOPICS.keys()),
+        options=["自定义"] + domain_keys,
     )
     if topic_key == "自定义":
-        topic = st.sidebar.text_area("输入话题", value="", height=80)
+        default_topic = st.session_state.get("random_topic", "")
+        topic = st.sidebar.text_area("输入话题", value=default_topic, height=80)
     else:
-        topic = st.sidebar.text_area("话题内容", value=TOPICS[topic_key], height=80)
+        domain_topics = topics_pool.get(topic_key, [])
+        selected_topic = st.sidebar.selectbox(
+            "选择话题",
+            options=domain_topics if domain_topics else ["（该领域暂无话题）"],
+            key="topic_select_in_domain",
+        )
+        topic = st.sidebar.text_area(
+            "话题内容",
+            value=selected_topic if domain_topics else "",
+            height=80,
+        )
+
+    with st.sidebar.expander("➕ 添加新话题"):
+        new_domain = st.text_input("领域名称", key="new_topic_domain")
+        new_topic_text = st.text_area("话题内容", key="new_topic_text", height=60)
+        if st.button("添加", key="btn_add_topic"):
+            if new_topic_text.strip():
+                domain = new_domain.strip() if new_domain.strip() else "未分类"
+                if domain not in st.session_state.topics_pool:
+                    st.session_state.topics_pool[domain] = []
+                st.session_state.topics_pool[domain].append(new_topic_text.strip())
+                st.rerun()
+            else:
+                st.warning("话题内容不能为空！")
 
     st.sidebar.subheader("Agent 配置")
 
@@ -133,41 +170,25 @@ def render_sidebar():
         "讨论轮数", min_value=1, max_value=20, value=num_llm + 1,
     )
 
-    st.sidebar.subheader("人类参与者角色")
-    expert_keys = list(EXPERTS.keys())
-    role_source = st.sidebar.selectbox(
-        "角色来源", options=["预设角色", "自定义"], key="human_role_source",
-    )
-    if role_source == "预设角色":
-        expert_choice = st.sidebar.selectbox(
-            "选择专家", options=expert_keys, key="human_expert",
-        )
-        human_role = EXPERTS[expert_choice]
-    else:
-        human_role = st.sidebar.text_area("角色背景", value="", key="human_role", height=60)
-
-    return mode, topic, max_rounds, num_llm, human_role
+    return mode, topic, max_rounds, num_llm
 
 
 # ── 构建 Agent 列表 ──
 
-def build_agents(num_llm: int, human_role: str, pool: dict) -> list:
+def build_agents(num_llm: int, pool: dict) -> list:
     """构建 Agent 列表：1 个人类 + num_llm 个自动抽取的 LLM。
 
     agent_id 不在此处设置，由 EnvBase 构造函数根据 shuffle 后的顺序动态分配。
+    LLM 的角色严格由外部配置文件决定，不再兜底分配。
     """
     agents = []
 
-    agents.append(AgentHuman(role_background=human_role))
+    agents.append(AgentHuman())
 
     sampled_keys = sample_llm_keys(pool, num_llm)
-    expert_keys = list(EXPERTS.keys())
-    random.shuffle(expert_keys)
 
-    for i, config_key in enumerate(sampled_keys):
+    for config_key in sampled_keys:
         agent = build_agent_from_config(config_key, pool)
-        if not agent.role_background:
-            agent.role_background = EXPERTS[expert_keys[i % len(expert_keys)]]
         agents.append(agent)
 
     return agents
@@ -269,11 +290,33 @@ def render_status(env):
 
 # ── 最终排名机制（所有讨论形式通用） ──
 
+def _init_ranking_state(others):
+    """初始化排名 session_state，每个 Agent 默认分配不同名次。"""
+    if "ranking_selections" not in st.session_state:
+        st.session_state.ranking_selections = {
+            a.agent_id: idx + 1 for idx, a in enumerate(others)
+        }
+
+
+def _on_rank_change(agent_id: int, num_others: int, all_agent_ids: list[int]):
+    """排名下拉框回调：当用户更改某个 Agent 的排名时，自动解决冲突。"""
+    new_rank = st.session_state[f"final_rank_{agent_id}"]
+    old_selections = st.session_state.ranking_selections
+    old_rank = old_selections.get(agent_id)
+
+    for aid, r in old_selections.items():
+        if aid != agent_id and r == new_rank:
+            old_selections[aid] = old_rank
+            break
+
+    old_selections[agent_id] = new_rank
+
+
 def render_final_ranking_form(env):
     """讨论结束后，人类对所有其他 Agent 进行一次总排名。
 
-    排名结果使用 position（动态展示序号）和 config_key（配置键名）标识，
-    不再使用旧的 agent_id / agent_name 字符串。
+    通过联动机制确保排名互不重复：当一个名次被选中后，
+    持有该名次的其他 Agent 会自动交换到原名次。
 
     Returns True 表示排名已提交，False 表示尚未提交或校验失败。
     """
@@ -282,41 +325,44 @@ def render_final_ranking_form(env):
         return False
 
     st.subheader("📊 最终排名 — 综合评价其他专家表现")
-    st.info("请根据整场讨论中各位专家的综合表现进行排名（1 = 最佳）")
+    st.info("请根据整场讨论中各位专家的综合表现进行排名（1 = 最佳）。名次会自动联动，确保不重复。")
 
     num_others = len(others)
+    all_agent_ids = [a.agent_id for a in others]
+    _init_ranking_state(others)
 
-    with st.form("final_ranking_form"):
-        rankings = {}
-        for idx, agent in enumerate(others):
-            color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
-            rank = st.selectbox(
-                f"{color} {agent.display_name} 的排名",
-                options=list(range(1, num_others + 1)),
-                index=idx,
-                key=f"final_rank_{agent.agent_id}",
-            )
-            rankings[agent.agent_id] = rank
+    for agent in others:
+        color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
+        current_rank = st.session_state.ranking_selections[agent.agent_id]
+        st.selectbox(
+            f"{color} {agent.display_name} 的排名",
+            options=list(range(1, num_others + 1)),
+            index=current_rank - 1,
+            key=f"final_rank_{agent.agent_id}",
+            on_change=_on_rank_change,
+            args=(agent.agent_id, num_others, all_agent_ids),
+        )
 
-        submitted = st.form_submit_button("提交排名", type="primary")
-        if submitted:
-            rank_values = list(rankings.values())
-            if len(set(rank_values)) != len(rank_values):
-                st.error("排名不能重复！请为每位专家分配不同的名次。")
-                return False
+    if st.button("提交排名", type="primary"):
+        rankings = st.session_state.ranking_selections
+        rank_values = list(rankings.values())
+        if len(set(rank_values)) != len(rank_values):
+            st.error("排名不能重复！请为每位专家分配不同的名次。")
+            return False
 
-            ranking_data = []
-            for agent in others:
-                ranking_data.append({
-                    "position": agent.agent_id,
-                    "config_key": agent.config_key,
-                    "rank": rankings[agent.agent_id],
-                })
-            ranking_data.sort(key=lambda x: x["rank"])
+        ranking_data = []
+        for agent in others:
+            ranking_data.append({
+                "position": agent.agent_id,
+                "config_key": agent.config_key,
+                "rank": rankings[agent.agent_id],
+            })
+        ranking_data.sort(key=lambda x: x["rank"])
 
-            env.final_rankings = ranking_data
-            st.session_state.pending_final_ranking = False
-            return True
+        env.final_rankings = ranking_data
+        st.session_state.pending_final_ranking = False
+        del st.session_state["ranking_selections"]
+        return True
 
     return False
 
@@ -326,7 +372,7 @@ def main():
     st.title("🧠 Brainstorm 头脑风暴系统")
 
     init_session_state()
-    mode, topic, max_rounds, num_llm, human_role = render_sidebar()
+    mode, topic, max_rounds, num_llm = render_sidebar()
 
     # ── 尚未开始：等待用户点击"开始讨论" ──
     if not st.session_state.started:
@@ -337,7 +383,7 @@ def main():
                 return
 
             pool = _load_model_pool()
-            agents = build_agents(num_llm, human_role, pool)
+            agents = build_agents(num_llm, pool)
             random.shuffle(agents)
 
             env_cls = ENV_MAP[mode]
@@ -383,7 +429,7 @@ def main():
             render_history(env)
 
         st.info(f"轮到 **{agent.display_name}** 发言，请根据上方的讨论上下文输入你的观点。")
-        with st.form("human_input_form"):
+        with st.form("human_input_form", clear_on_submit=True):
             user_input = st.text_area(
                 f"{agent.display_name} 的发言",
                 height=150,
