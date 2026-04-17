@@ -438,7 +438,10 @@ def _init_mp_ranking_state(others):
 
 
 def _on_mp_rank_change(agent_id: int):
-    """联机版排名下拉框回调：自动交换冲突名次。"""
+    """联机版排名下拉框回调：自动交换冲突名次。
+
+    同时同步更新被交换 Agent 对应的 widget key，确保 UI 联动生效。
+    """
     new_rank = st.session_state[f"rank_{agent_id}"]
     sel = st.session_state.mp_ranking_selections
     old_rank = sel.get(agent_id)
@@ -446,6 +449,7 @@ def _on_mp_rank_change(agent_id: int):
     for aid, r in sel.items():
         if aid != agent_id and r == new_rank:
             sel[aid] = old_rank
+            st.session_state[f"rank_{aid}"] = old_rank
             break
 
     sel[agent_id] = new_rank
@@ -456,7 +460,7 @@ def _render_ranking_form(room, env, my_agent_id: int):
     room_id = st.session_state.room_id
 
     if not others:
-        rm.submit_ranking(room_id, my_agent_id, [])
+        rm.submit_ranking(room_id, my_agent_id, [])  # 空列表始终通过校验
         st.rerun()
         return
 
@@ -482,8 +486,12 @@ def _render_ranking_form(room, env, my_agent_id: int):
     if st.button("提交排名", type="primary"):
         rankings = st.session_state.mp_ranking_selections
         rank_values = list(rankings.values())
-        if len(set(rank_values)) != len(rank_values):
-            st.error("排名不能重复！请为每位专家分配不同的名次。")
+        expected = set(range(1, num_others + 1))
+        if set(rank_values) != expected or len(rank_values) != num_others:
+            st.error(
+                f"排名无效！请为每位专家分配从 1 到 {num_others} 的不重复名次，"
+                "不允许并列排名。请重新调整后再提交。"
+            )
             return
 
         ranking_data = []
@@ -495,7 +503,10 @@ def _render_ranking_form(room, env, my_agent_id: int):
             })
         ranking_data.sort(key=lambda x: x["rank"])
 
-        rm.submit_ranking(room_id, my_agent_id, ranking_data)
+        ok, err_msg = rm.submit_ranking(room_id, my_agent_id, ranking_data)
+        if not ok:
+            st.error(f"排名提交被服务端拒绝：{err_msg}")
+            return
         del st.session_state["mp_ranking_selections"]
         st.rerun()
 

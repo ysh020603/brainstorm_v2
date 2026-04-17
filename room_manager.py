@@ -202,12 +202,45 @@ def auto_advance_llm(env) -> None:
         env.step()
 
 
-def submit_ranking(room_id: str, agent_id: int, ranking_data: list[dict]) -> None:
+def validate_strict_total_order(ranking_data: list[dict]) -> tuple[bool, str]:
+    """严格全序校验：排序值必须恰好构成 {1, 2, ..., N} 且无重复。"""
+    if not ranking_data:
+        return True, ""
+    rank_values = [entry["rank"] for entry in ranking_data]
+    n = len(ranking_data)
+    expected = set(range(1, n + 1))
+    if len(rank_values) != n:
+        return False, f"排序数量不匹配：期望 {n} 个排名值，实际 {len(rank_values)} 个"
+    if set(rank_values) != expected:
+        duplicates = [v for v in rank_values if rank_values.count(v) > 1]
+        missing = expected - set(rank_values)
+        parts = []
+        if duplicates:
+            parts.append(f"存在重复排名 {sorted(set(duplicates))}")
+        if missing:
+            parts.append(f"缺少排名 {sorted(missing)}")
+        return False, "；".join(parts)
+    return True, ""
+
+
+def submit_ranking(
+    room_id: str, agent_id: int, ranking_data: list[dict]
+) -> tuple[bool, str]:
+    """提交排名数据，写入前执行严格全序校验。
+
+    Returns:
+        (True, "") 表示校验通过并已写入；
+        (False, error_msg) 表示校验失败，数据未写入，该玩家保持"未提交"状态。
+    """
+    valid, err_msg = validate_strict_total_order(ranking_data)
+    if not valid:
+        return False, err_msg
     with _rooms_lock:
         room = _rooms.get(room_id)
         if room is None:
-            return
+            return False, "房间不存在"
         room.rankings_submitted[agent_id] = ranking_data
+    return True, ""
 
 
 def all_rankings_submitted(room_id: str) -> bool:

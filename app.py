@@ -299,7 +299,10 @@ def _init_ranking_state(others):
 
 
 def _on_rank_change(agent_id: int, num_others: int, all_agent_ids: list[int]):
-    """排名下拉框回调：当用户更改某个 Agent 的排名时，自动解决冲突。"""
+    """排名下拉框回调：当用户更改某个 Agent 的排名时，自动交换冲突名次。
+
+    同时同步更新被交换 Agent 对应的 widget key，确保 UI 联动生效。
+    """
     new_rank = st.session_state[f"final_rank_{agent_id}"]
     old_selections = st.session_state.ranking_selections
     old_rank = old_selections.get(agent_id)
@@ -307,6 +310,7 @@ def _on_rank_change(agent_id: int, num_others: int, all_agent_ids: list[int]):
     for aid, r in old_selections.items():
         if aid != agent_id and r == new_rank:
             old_selections[aid] = old_rank
+            st.session_state[f"final_rank_{aid}"] = old_rank
             break
 
     old_selections[agent_id] = new_rank
@@ -346,8 +350,12 @@ def render_final_ranking_form(env):
     if st.button("提交排名", type="primary"):
         rankings = st.session_state.ranking_selections
         rank_values = list(rankings.values())
-        if len(set(rank_values)) != len(rank_values):
-            st.error("排名不能重复！请为每位专家分配不同的名次。")
+        expected = set(range(1, num_others + 1))
+        if set(rank_values) != expected or len(rank_values) != num_others:
+            st.error(
+                f"排名无效！请为每位专家分配从 1 到 {num_others} 的不重复名次，"
+                "不允许并列排名。请重新调整后再提交。"
+            )
             return False
 
         ranking_data = []
