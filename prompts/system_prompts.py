@@ -11,9 +11,10 @@ def build_system_prompt(
     total_agents: int,
     topic: str,
     role_background: str,
+    identity_prompt: str = "",
 ) -> str:
     mode_display = MODE_NAMES.get(mode, mode)
-    return (
+    base = (
         f"你正在参加一场头脑风暴讨论。\n"
         f"讨论形式：{mode_display}\n"
         f"参与人数：{total_agents}\n"
@@ -24,3 +25,6 @@ def build_system_prompt(
         f"- 生成内容要求有启发性，并提出具体的看法或方案。\n"
         f"- 只生成严谨的发言，不要生成其他内容，不需要介绍自己。"
     )
+    if identity_prompt:
+        return identity_prompt + "\n\n" + base
+    return base

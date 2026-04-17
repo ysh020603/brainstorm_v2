@@ -19,6 +19,7 @@ from envs.round_robin import RoundRobin
 from envs.random_env import RandomEnv
 from envs.leader_worker import LeaderWorker
 from prompts.topics import TOPICS, EXPERTS
+from tools.config_loader import load_llm_config, build_agent_from_config
 
 ENV_MAP = {
     "brainwrite": BrainWrite,
@@ -36,17 +37,6 @@ MODE_LABELS = {
 
 AGENT_COLORS = [
     "🔵", "🟢", "🟠", "🟣", "🔴", "🟡", "⚪", "🟤",
-]
-
-# ── 静态 API 配置池（5 份相同配置，后台随机无放回分配给 LLM Agent） ──
-API_CONFIG_POOL = [
-    {
-        "api_key": "EMPTY",
-        "base_url": "http://172.18.39.164:8002/v1",
-        "model": "Qwen3-8B",
-        "temperature": 0.7,
-    }
-    for _ in range(5)
 ]
 
 
@@ -68,6 +58,16 @@ def _reset_session():
         st.session_state[key] = False
     st.session_state["env"] = None
     st.rerun()
+
+
+def _load_model_pool():
+    """加载 LLM 配置池（带缓存避免每次 rerun 重读）。"""
+    if "llm_pool" not in st.session_state:
+        try:
+            st.session_state.llm_pool = load_llm_config()
+        except FileNotFoundError:
+            st.session_state.llm_pool = {}
+    return st.session_state.llm_pool
 
 
 def render_sidebar():
@@ -111,6 +111,9 @@ def render_sidebar():
         index=0,
     )
 
+    pool = _load_model_pool()
+    model_keys = list(pool.keys()) if pool else []
+
     agent_configs = []
     expert_keys = list(EXPERTS.keys())
 
@@ -118,8 +121,6 @@ def render_sidebar():
         is_human = (i + 1 == human_agent_idx)
         label = f"Agent {i + 1} {'👤 人类' if is_human else '🤖 LLM'}"
         with st.sidebar.expander(label, expanded=(i == 0)):
-            name = st.text_input("名称", value=f"专家{i + 1}", key=f"name_{i}")
-
             role_source = st.selectbox(
                 "角色来源",
                 options=["预设角色", "自定义"],
@@ -136,10 +137,25 @@ def render_sidebar():
             else:
                 role = st.text_area("角色背景", value="", key=f"role_{i}", height=60)
 
+            model_key = None
+            if not is_human and model_keys:
+                model_key = st.selectbox(
+                    "LLM 模型",
+                    options=model_keys,
+                    index=0,
+                    key=f"model_key_{i}",
+                )
+
+            enable_identity = st.checkbox("启用身份提示词", value=False, key=f"enable_id_{i}")
+            identity_prompt = ""
+            if enable_identity:
+                identity_prompt = st.text_area("身份提示词", value="", key=f"id_prompt_{i}", height=60)
+
             agent_configs.append({
                 "is_human": is_human,
-                "name": name,
                 "role": role,
+                "model_key": model_key,
+                "identity_prompt": identity_prompt if enable_identity else "",
             })
 
     # Leader-Worker 模式下人类自动为 Leader，无需手动配置
@@ -148,37 +164,33 @@ def render_sidebar():
     return mode, topic, max_rounds, agent_configs, leader_ids
 
 
-# ── 从配置池无放回随机抽取，构建 Agent ──
+# ── 从 llm_config.json 构建 Agent ──
 
-def build_agents_from_config(configs: list[dict]) -> list:
-    """构建 Agent 列表。LLM Agent 的 API 配置从 API_CONFIG_POOL 随机无放回抽取。"""
-    pool = [cfg.copy() for cfg in API_CONFIG_POOL]
-    random.shuffle(pool)
-
+def build_agents(configs: list[dict]) -> list:
+    """构建 Agent 列表。LLM Agent 的 API 配置从 llm_config.json 加载。"""
+    pool = _load_model_pool()
     agents = []
     for i, cfg in enumerate(configs):
         agent_id = i + 1
         if cfg["is_human"]:
             agents.append(AgentHuman(
                 agent_id=agent_id,
-                name=cfg["name"],
                 role_background=cfg["role"],
             ))
         else:
-            api_cfg = pool.pop()
-            agents.append(AgentLLM(
-                agent_id=agent_id,
-                name=cfg["name"],
-                role_background=cfg["role"],
-                api_config={
-                    "api_key": api_cfg["api_key"],
-                    "base_url": api_cfg["base_url"],
-                },
-                inference_config={
-                    "model": api_cfg["model"],
-                    "temperature": api_cfg["temperature"],
-                },
-            ))
+            model_key = cfg.get("model_key")
+            if model_key and model_key in pool:
+                agent = build_agent_from_config(agent_id, model_key, pool)
+                if cfg.get("role"):
+                    agent.role_background = cfg["role"]
+            else:
+                agent = AgentLLM(
+                    agent_id=agent_id,
+                    role_background=cfg["role"],
+                    api_config={"api_key": "EMPTY", "base_url": "http://localhost:8000/v1"},
+                    inference_config={"model": "unknown", "temperature": 0.7},
+                )
+            agents.append(agent)
     return agents
 
 
@@ -213,7 +225,7 @@ def render_brainwrite_history(env):
 
         color = AGENT_COLORS[origin_idx % len(AGENT_COLORS)]
         with st.expander(
-            f"{color} 纸条路线 {origin_idx + 1}（由 {origin_agent.name} 发起）",
+            f"{color} 纸条路线 {origin_idx + 1}（由 {origin_agent.display_name} 发起）",
             expanded=True,
         ):
             for entry in sorted(entries, key=lambda e: e["round"]):
@@ -251,8 +263,8 @@ def render_agent_perspective(env, agent):
         if msg["role"] == "system":
             continue
         elif msg["role"] == "assistant":
-            with st.chat_message(name=agent.name, avatar="🧑"):
-                st.markdown(f"**{color} {agent.name}** (你的历史发言)")
+            with st.chat_message(name=agent.display_name, avatar="🧑"):
+                st.markdown(f"**{color} {agent.display_name}** (你的历史发言)")
                 st.markdown(msg["content"])
         elif msg["role"] == "user":
             with st.chat_message(name="讨论进展", avatar="📋"):
@@ -297,7 +309,7 @@ def render_final_ranking_form(env):
         for idx, agent in enumerate(others):
             color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
             rank = st.selectbox(
-                f"{color} {agent.name} 的排名",
+                f"{color} {agent.display_name} 的排名",
                 options=list(range(1, num_others + 1)),
                 index=idx,
                 key=f"final_rank_{agent.agent_id}",
@@ -315,7 +327,7 @@ def render_final_ranking_form(env):
             for agent in others:
                 ranking_data.append({
                     "agent_id": agent.agent_id,
-                    "agent_name": agent.name,
+                    "agent_name": agent.display_name,
                     "rank": rankings[agent.agent_id],
                 })
             ranking_data.sort(key=lambda x: x["rank"])
@@ -342,7 +354,8 @@ def main():
                 st.error("请输入讨论话题！")
                 return
 
-            agents = build_agents_from_config(agent_configs)
+            agents = build_agents(agent_configs)
+            random.shuffle(agents)
             env_cls = ENV_MAP[mode]
             if mode == "leader_worker":
                 env = env_cls(
@@ -378,16 +391,16 @@ def main():
 
     if env.state == EnvState.WAITING_HUMAN:
         agent = env._get_current_agent()
-        st.subheader(f"🧑 {agent.name} 的视角（第{env.current_round}轮）")
+        st.subheader(f"🧑 {agent.display_name} 的视角（第{env.current_round}轮）")
         render_agent_perspective(env, agent)
 
         with st.expander("📜 查看完整讨论记录（上帝视角）"):
             render_history(env)
 
-        st.info(f"轮到 **{agent.name}** 发言，请根据上方的讨论上下文输入你的观点。")
+        st.info(f"轮到 **{agent.display_name}** 发言，请根据上方的讨论上下文输入你的观点。")
         with st.form("human_input_form"):
             user_input = st.text_area(
-                f"{agent.name} 的发言",
+                f"{agent.display_name} 的发言",
                 height=150,
                 placeholder="请输入你的观点...",
             )

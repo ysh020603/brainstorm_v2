@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .env_base import EnvBase
 from agents.agent_base import AgentBase
+from prompts import instruct_prompts as IP
 
 
 class BrainWrite(EnvBase):
@@ -83,15 +84,10 @@ class BrainWrite(EnvBase):
     def format_round_prompt(self, turn_num: int, others_entries: list[dict], agent_id: int) -> str:
         lines = []
         for entry in others_entries:
-            speaker = self.get_agent_name(entry["agent_id"])
-            if self.get_agent(entry["agent_id"]).is_human:
-                speaker = f"人类专家 {speaker}"
-            lines.append(f"- {speaker} 的草稿：{entry['content']}")
-        return (
-            f"在第 {turn_num} 轮讨论中，你收到了传递过来的脑力书写草稿。"
-            f"请仔细阅读前人的思路，并在此基础上继续延伸你的专业见解。\n"
-            f"草稿内容如下：\n" + "\n".join(lines)
-        )
+            speaker = self.get_agent_display_name(entry["agent_id"])
+            lines.append(IP.BRAINWRITE_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
+        body = "\n".join(lines)
+        return IP.BRAINWRITE_ROUND.format(turn_num=turn_num, body=body)
 
     def format_initial_prompt(self, agent_id: int) -> str:
-        return "这是第一轮脑力书写，请你写下你对讨论主题的初始思考和创意。"
+        return IP.BRAINWRITE_INITIAL

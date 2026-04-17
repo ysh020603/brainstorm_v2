@@ -7,6 +7,7 @@ from datetime import datetime
 
 from agents.agent_base import AgentBase, EnvState
 from prompts.system_prompts import build_system_prompt
+from prompts import instruct_prompts as IP
 
 
 class EnvBase:
@@ -39,7 +40,11 @@ class EnvBase:
     # ------------------------------------------------------------------
 
     def init(self):
-        """初始化讨论：为每个 Agent 设置 system prompt，准备第一轮发言顺序。"""
+        """初始化讨论：分配 position，为每个 Agent 设置 system prompt，准备第一轮发言顺序。"""
+        for i, agent in enumerate(self.agents):
+            agent.position = i + 1
+        self._agent_map = {a.agent_id: a for a in self.agents}
+
         for agent in self.agents:
             agent.system_prompt = build_system_prompt(
                 mode=self.mode,
@@ -166,18 +171,16 @@ class EnvBase:
         """
         lines = []
         for entry in others_entries:
-            speaker = self.get_agent_name(entry["agent_id"])
-            if self.get_agent(entry["agent_id"]).is_human:
-                speaker = f"人类专家 {speaker}"
-            lines.append(f"- {speaker} 说：{entry['content']}")
+            speaker = self.get_agent_display_name(entry["agent_id"])
+            lines.append(IP.SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
         body = "\n".join(lines)
         if turn_num == 1:
-            return f"在讨论中，以下参与者率先发表了观点：\n{body}"
-        return f"在你上次发言后，以下参与者发表了新的观点：\n{body}"
+            return IP.ROUND_FIRST.format(body=body)
+        return IP.ROUND_FOLLOW.format(body=body)
 
     def format_initial_prompt(self, agent_id: int) -> str:
         """当无他人可见发言时的默认 User 提示。子类可重写。"""
-        return "现在请你率先发言，针对讨论主题分享你的观点和思考。"
+        return IP.INITIAL_PROMPT
 
     # ------------------------------------------------------------------
     # 可见性（子类重写）
@@ -206,7 +209,7 @@ class EnvBase:
         self.global_history.append({
             "round": self.current_round,
             "agent_id": agent.agent_id,
-            "agent_name": agent.name,
+            "agent_name": agent.display_name,
             "content": content,
         })
 
@@ -235,7 +238,10 @@ class EnvBase:
         return self._agent_map[agent_id]
 
     def get_agent_name(self, agent_id: int) -> str:
-        return self._agent_map[agent_id].name
+        return self._agent_map[agent_id].display_name
+
+    def get_agent_display_name(self, agent_id: int) -> str:
+        return self._agent_map[agent_id].display_name
 
     # ------------------------------------------------------------------
     # 日志
@@ -258,6 +264,16 @@ class EnvBase:
             msgs = self.build_messages_for_agent(agent)
             final_messages[str(agent.agent_id)] = msgs
 
+        position_map = [
+            {
+                "position": a.position,
+                "agent_id": a.agent_id,
+                "type": "human" if a.is_human else "llm",
+                "model": getattr(a, "inference_config", {}).get("model", "human"),
+            }
+            for a in self.agents
+        ]
+
         log_data = {
             "metadata": {
                 "mode": self.mode,
@@ -267,6 +283,7 @@ class EnvBase:
                 "human_count": human_count,
                 "timestamp": datetime.now().isoformat(),
                 "agents": [a.get_agent_info() for a in self.agents],
+                "position_map": position_map,
             },
             "global_history": self.global_history,
             "final_messages": final_messages,

@@ -23,6 +23,7 @@ from envs.round_robin import RoundRobin
 from envs.random_env import RandomEnv
 from envs.leader_worker import LeaderWorker
 from prompts.topics import TOPICS, EXPERTS
+from tools.config_loader import load_llm_config, build_agent_from_config
 
 ENV_MAP = {
     "brainwrite": BrainWrite,
@@ -30,16 +31,6 @@ ENV_MAP = {
     "random": RandomEnv,
     "leader_worker": LeaderWorker,
 }
-
-API_CONFIG_POOL = [
-    {
-        "api_key": "EMPTY",
-        "base_url": "http://172.18.39.164:8002/v1",
-        "model": "Qwen3-8B",
-        "temperature": 0.7,
-    }
-    for _ in range(5)
-]
 
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_human_2")
 
@@ -73,9 +64,16 @@ def _generate_room_id() -> str:
             return rid
 
 
+def _load_pool():
+    try:
+        return load_llm_config()
+    except FileNotFoundError:
+        return {}
+
+
 def _build_agents(agent_configs: list[dict], human_seats: list[int]) -> list:
-    pool = [cfg.copy() for cfg in API_CONFIG_POOL]
-    random.shuffle(pool)
+    pool = _load_pool()
+    model_keys = list(pool.keys())
 
     agents = []
     for i, cfg in enumerate(agent_configs):
@@ -83,24 +81,26 @@ def _build_agents(agent_configs: list[dict], human_seats: list[int]) -> list:
         if agent_id in human_seats:
             agents.append(AgentHuman(
                 agent_id=agent_id,
-                name=cfg["name"],
-                role_background=cfg["role"],
+                role_background=cfg.get("role", "人类专家"),
             ))
         else:
-            api_cfg = pool.pop()
-            agents.append(AgentLLM(
-                agent_id=agent_id,
-                name=cfg["name"],
-                role_background=cfg["role"],
-                api_config={
-                    "api_key": api_cfg["api_key"],
-                    "base_url": api_cfg["base_url"],
-                },
-                inference_config={
-                    "model": api_cfg["model"],
-                    "temperature": api_cfg["temperature"],
-                },
-            ))
+            model_key = cfg.get("model_key")
+            if model_key and model_key in pool:
+                agent = build_agent_from_config(agent_id, model_key, pool)
+                if cfg.get("role"):
+                    agent.role_background = cfg["role"]
+            elif model_keys:
+                agent = build_agent_from_config(agent_id, model_keys[0], pool)
+                if cfg.get("role"):
+                    agent.role_background = cfg["role"]
+            else:
+                agent = AgentLLM(
+                    agent_id=agent_id,
+                    role_background=cfg.get("role", ""),
+                    api_config={"api_key": "EMPTY", "base_url": "http://localhost:8000/v1"},
+                    inference_config={"model": "unknown", "temperature": 0.7},
+                )
+            agents.append(agent)
     return agents
 
 
@@ -117,6 +117,7 @@ def create_room(
         room_id = _generate_room_id()
 
         agents = _build_agents(agent_configs, human_seats)
+        random.shuffle(agents)
         env_cls = ENV_MAP[mode]
         if mode == "leader_worker":
             env = env_cls(
@@ -226,6 +227,16 @@ def save_and_get_log(room_id: str) -> str | None:
             msgs = env.build_messages_for_agent(agent)
             final_messages[str(agent.agent_id)] = msgs
 
+        position_map = [
+            {
+                "position": a.position,
+                "agent_id": a.agent_id,
+                "type": "human" if a.is_human else "llm",
+                "model": getattr(a, "inference_config", {}).get("model", "human"),
+            }
+            for a in env.agents
+        ]
+
         log_data = {
             "metadata": {
                 "mode": room.mode,
@@ -235,6 +246,7 @@ def save_and_get_log(room_id: str) -> str | None:
                 "human_count": human_count,
                 "timestamp": datetime.now().isoformat(),
                 "agents": [a.get_agent_info() for a in env.agents],
+                "position_map": position_map,
                 "room_id": room_id,
             },
             "global_history": env.global_history,

@@ -12,10 +12,24 @@ def call_openai(
         messages: 完整的 messages 列表 (system / user / assistant)。
         api_config: 传给 OpenAI 客户端的参数，如 api_key、base_url。
         inference_config: 传给 chat.completions.create 的参数，如 model、temperature。
+            可包含 is_reasoning 布尔值控制思考模式。
     """
     client = OpenAI(**api_config)
+
+    call_kwargs = dict(inference_config)
+    is_reasoning = call_kwargs.pop("is_reasoning", False)
+
+    if not is_reasoning:
+        model_name = call_kwargs.get("model", "")
+        if "glm" in model_name.lower():
+            call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            call_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": False}
+            }
+
     completion = client.chat.completions.create(
         messages=messages,
-        **inference_config,
+        **call_kwargs,
     )
     return completion.choices[0].message.content

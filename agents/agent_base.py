@@ -13,12 +13,16 @@ class EnvState(Enum):
 class AgentBase:
     """所有 Agent 的抽象基类。"""
 
-    def __init__(self, agent_id: int, name: str, role_background: str):
+    def __init__(self, agent_id: int, role_background: str):
         self.agent_id = agent_id
-        self.name = name
         self.role_background = role_background
+        self.position: int | None = None
         self.system_prompt: str | None = None
         self.last_messages: list[dict] | None = None
+
+    @property
+    def display_name(self) -> str:
+        return f"Agent {self.position}" if self.position else f"Agent {self.agent_id}"
 
     @property
     def is_human(self) -> bool:
@@ -32,7 +36,7 @@ class AgentBase:
         """返回用于日志的 Agent 元信息。"""
         return {
             "agent_id": self.agent_id,
-            "name": self.name,
+            "position": self.position,
             "type": "human" if self.is_human else "llm",
             "role_background": self.role_background,
         }

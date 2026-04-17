@@ -10,12 +10,11 @@ class AgentLLM(AgentBase):
     def __init__(
         self,
         agent_id: int,
-        name: str,
         role_background: str,
         api_config: dict,
         inference_config: dict,
     ):
-        super().__init__(agent_id, name, role_background)
+        super().__init__(agent_id, role_background)
         self.api_config = api_config
         self.inference_config = inference_config
 

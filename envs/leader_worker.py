@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .env_base import EnvBase
 from agents.agent_base import AgentBase
+from prompts import instruct_prompts as IP
 
 
 class LeaderWorker(EnvBase):
@@ -50,39 +51,25 @@ class LeaderWorker(EnvBase):
             names = []
             lines = []
             for entry in others_entries:
-                speaker = self.get_agent_name(entry["agent_id"])
-                if self.get_agent(entry["agent_id"]).is_human:
-                    speaker = f"人类专家 {speaker}"
+                speaker = self.get_agent_display_name(entry["agent_id"])
                 names.append(speaker)
-                lines.append(f"- {speaker} 汇报称：{entry['content']}")
+                lines.append(IP.LEADER_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
             names_str = "、".join(names)
+            body = "\n".join(lines)
             if turn_num == 1:
-                return (
-                    f"你收到了来自组员 {names_str} 的初步分析报告。"
-                    f"作为 Leader，请综合以下信息给出你的指导意见：\n" + "\n".join(lines)
-                )
-            return (
-                f"在你上次指导后，组员 {names_str} 提交了更新的分析报告。"
-                f"作为 Leader，请综合以下信息给出进一步的指导意见：\n" + "\n".join(lines)
-            )
+                return IP.LEADER_ROUND_FIRST.format(names=names_str, body=body)
+            return IP.LEADER_ROUND_FOLLOW.format(names=names_str, body=body)
         else:
             lines = []
             for entry in others_entries:
-                speaker = self.get_agent_name(entry["agent_id"])
-                if self.get_agent(entry["agent_id"]).is_human:
-                    speaker = f"人类专家 {speaker}"
-                lines.append(f"- {speaker} 的指导：{entry['content']}")
+                speaker = self.get_agent_display_name(entry["agent_id"])
+                lines.append(IP.WORKER_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
+            body = "\n".join(lines)
             if turn_num == 1:
-                return (
-                    f"你收到了来自 Leader 的战略指导。"
-                    f"请根据以下指导制定你的专业方案：\n" + "\n".join(lines)
-                )
-            return (
-                f"在你上次汇报后，Leader 给出了新的战略指导。"
-                f"请根据以下指导调整你的专业方案：\n" + "\n".join(lines)
-            )
+                return IP.WORKER_ROUND_FIRST.format(body=body)
+            return IP.WORKER_ROUND_FOLLOW.format(body=body)
 
     def format_initial_prompt(self, agent_id: int) -> str:
         if self._is_leader(agent_id):
-            return "作为 Leader，请率先给出你的战略方向和指导意见。"
-        return "作为组员，请率先提交你对主题的初步分析报告。"
+            return IP.LEADER_INITIAL
+        return IP.WORKER_INITIAL

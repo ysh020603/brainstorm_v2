@@ -72,7 +72,7 @@ def render_brainwrite_history(env):
             continue
         color = AGENT_COLORS[origin_idx % len(AGENT_COLORS)]
         with st.expander(
-            f"{color} 纸条路线 {origin_idx + 1}（由 {origin_agent.name} 发起）",
+            f"{color} 纸条路线 {origin_idx + 1}（由 {origin_agent.display_name} 发起）",
             expanded=True,
         ):
             for entry in sorted(entries, key=lambda e: e["round"]):
@@ -106,8 +106,8 @@ def render_agent_perspective(env, agent):
         if msg["role"] == "system":
             continue
         elif msg["role"] == "assistant":
-            with st.chat_message(name=agent.name, avatar="🧑"):
-                st.markdown(f"**{color} {agent.name}** (你的历史发言)")
+            with st.chat_message(name=agent.display_name, avatar="🧑"):
+                st.markdown(f"**{color} {agent.display_name}** (你的历史发言)")
                 st.markdown(msg["content"])
         elif msg["role"] == "user":
             with st.chat_message(name="讨论进展", avatar="📋"):
@@ -197,7 +197,6 @@ def _render_create_room():
         is_human = (i + 1) in human_seats
         label = f"Agent {i + 1} {'👤 人类' if is_human else '🤖 LLM'}"
         with st.expander(label, expanded=(i == 0)):
-            name = st.text_input("名称", value=f"专家{i + 1}", key=f"cr_name_{i}")
             role_source = st.selectbox(
                 "角色来源",
                 options=["预设角色", "自定义"],
@@ -213,7 +212,7 @@ def _render_create_room():
                 role = EXPERTS[expert_choice]
             else:
                 role = st.text_area("角色背景", value="", key=f"cr_role_{i}", height=60)
-            agent_configs.append({"name": name, "role": role})
+            agent_configs.append({"role": role})
 
     if st.button("创建房间", type="primary", key="btn_create"):
         if not topic.strip():
@@ -282,8 +281,10 @@ def render_claim_seat(is_host: bool):
         cfg = room.agent_configs[aid - 1]
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.write(f"**Agent {aid} — {cfg['name']}**")
-            st.caption(cfg["role"][:100] + ("..." if len(cfg["role"]) > 100 else ""))
+            st.write(f"**Agent {aid}**")
+            role_text = cfg.get("role", "")
+            if role_text:
+                st.caption(role_text[:100] + ("..." if len(role_text) > 100 else ""))
         with col2:
             if st.button(f"认领 Agent {aid}", key=f"claim_{aid}"):
                 sid = _get_session_id()
@@ -317,13 +318,12 @@ def render_waiting_players():
 
     st.subheader("座位状态")
     for aid in room.human_seats:
-        cfg = room.agent_configs[aid - 1]
         if aid in room.claimed_seats:
             is_me = (aid == st.session_state.my_agent_id)
             tag = " (你)" if is_me else ""
-            st.success(f"Agent {aid} — {cfg['name']}：已认领{tag}")
+            st.success(f"Agent {aid}：已认领{tag}")
         else:
-            st.warning(f"Agent {aid} — {cfg['name']}：等待中...")
+            st.warning(f"Agent {aid}：等待中...")
 
     if rm.is_room_ready(room_id):
         st.balloons()
@@ -375,16 +375,16 @@ def render_discussion():
 
 
 def _render_my_turn(room, env, my_agent):
-    st.subheader(f"🧑 {my_agent.name} 的视角（第{env.current_round}轮）")
+    st.subheader(f"🧑 {my_agent.display_name} 的视角（第{env.current_round}轮）")
     render_agent_perspective(env, my_agent)
 
     with st.expander("📜 查看完整讨论记录（上帝视角）"):
         render_history(env)
 
-    st.info(f"轮到 **{my_agent.name}** 发言，请根据上方的讨论上下文输入你的观点。")
+    st.info(f"轮到 **{my_agent.display_name}** 发言，请根据上方的讨论上下文输入你的观点。")
     with st.form("human_input_form"):
         user_input = st.text_area(
-            f"{my_agent.name} 的发言",
+            f"{my_agent.display_name} 的发言",
             height=150,
             placeholder="请输入你的观点...",
         )
@@ -404,7 +404,7 @@ def _render_my_turn(room, env, my_agent):
 def _render_waiting_turn(env, current_agent):
     st_autorefresh(interval=3000, key="turn_wait_refresh")
     color = AGENT_COLORS[(current_agent.agent_id - 1) % len(AGENT_COLORS)]
-    st.warning(f"正在等待 {color} **{current_agent.name}** 思考并输入...")
+    st.warning(f"正在等待 {color} **{current_agent.display_name}** 思考并输入...")
     with st.expander("📜 查看当前讨论记录", expanded=True):
         render_history(env)
 
@@ -442,11 +442,10 @@ def render_ranking():
         st_autorefresh(interval=3000, key="rank_wait_refresh")
         st.subheader("排名提交状态")
         for aid in room.human_seats:
-            cfg = room.agent_configs[aid - 1]
             if aid in room.rankings_submitted:
-                st.success(f"Agent {aid} — {cfg['name']}：已提交")
+                st.success(f"Agent {aid}：已提交")
             else:
-                st.warning(f"Agent {aid} — {cfg['name']}：等待中...")
+                st.warning(f"Agent {aid}：等待中...")
 
 
 def _render_ranking_form(room, env, my_agent_id: int):
@@ -468,7 +467,7 @@ def _render_ranking_form(room, env, my_agent_id: int):
             color = AGENT_COLORS[(agent.agent_id - 1) % len(AGENT_COLORS)]
             role_icon = "🧑" if agent.is_human else "🤖"
             rank = st.selectbox(
-                f"{color} {role_icon} {agent.name} 的排名",
+                f"{color} {role_icon} {agent.display_name} 的排名",
                 options=list(range(1, num_others + 1)),
                 index=idx,
                 key=f"rank_{agent.agent_id}",
@@ -486,7 +485,7 @@ def _render_ranking_form(room, env, my_agent_id: int):
             for agent in others:
                 ranking_data.append({
                     "agent_id": agent.agent_id,
-                    "agent_name": agent.name,
+                    "agent_name": agent.display_name,
                     "rank": rankings[agent.agent_id],
                 })
             ranking_data.sort(key=lambda x: x["rank"])
