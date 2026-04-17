@@ -18,12 +18,11 @@ def load_llm_config(config_path: str | None = None) -> dict:
     return data["llm_agents_pool"]
 
 
-def build_agent_from_config(agent_id: int, model_key: str, pool: dict):
+def build_agent_from_config(model_key: str, pool: dict):
     """根据配置字典构建 AgentLLM 实例。
 
     Args:
-        agent_id: 内部 agent 标识。
-        model_key: llm_agents_pool 中的键名。
+        model_key: llm_agents_pool 中的键名，同时作为 config_key 记录到日志。
         pool: load_llm_config() 返回的字典。
     """
     cfg = pool[model_key]
@@ -47,8 +46,8 @@ def build_agent_from_config(agent_id: int, model_key: str, pool: dict):
 
     from agents.agent_llm import AgentLLM
     return AgentLLM(
-        agent_id=agent_id,
         role_background=role_background,
         api_config=api_config,
         inference_config=inference_config,
+        config_key=model_key,
     )

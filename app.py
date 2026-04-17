@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Brainstorm Streamlit 前端。
+"""Brainstorm Streamlit 前端（单人类参与实验）。
 
 启动：streamlit run app.py
+
+Human Evaluation 模式下，LLM Agent 从 llm_agents_pool 中自动盲抽，
+用户仅需选择 LLM 数量，无需手动配置具体模型。
 """
 
 import sys
@@ -70,10 +73,33 @@ def _load_model_pool():
     return st.session_state.llm_pool
 
 
-def render_sidebar():
-    """侧边栏：配置讨论参数。"""
+# ── LLM Agent 自动抽取 ──
 
-    # ── 重新开始按钮（置顶） ──
+def sample_llm_keys(pool: dict, num_llm: int) -> list[str]:
+    """从 llm_agents_pool 中抽取 config_key 列表。
+
+    - num_llm <= pool size: 无放回随机抽取
+    - num_llm >  pool size: 先全部取出，余额有放回补齐
+    """
+    keys = list(pool.keys())
+    if not keys:
+        return []
+    if num_llm <= len(keys):
+        return random.sample(keys, num_llm)
+    result = list(keys)
+    remaining = num_llm - len(keys)
+    result.extend(random.choices(keys, k=remaining))
+    random.shuffle(result)
+    return result
+
+
+def render_sidebar():
+    """侧边栏：配置讨论参数。
+
+    Human Evaluation 模式下不再提供 LLM 手动配置，
+    用户仅选择 LLM 数量，后台自动从 pool 中盲抽。
+    """
+
     if st.sidebar.button("🔄 重新开始", use_container_width=True):
         _reset_session()
 
@@ -94,103 +120,56 @@ def render_sidebar():
     else:
         topic = st.sidebar.text_area("话题内容", value=TOPICS[topic_key], height=80)
 
-    # ── Agent 总数 (3‑5)，讨论轮数默认 = Agent 总数 ──
     st.sidebar.subheader("Agent 配置")
-    num_agents = st.sidebar.number_input(
-        "Agent 总数", min_value=3, max_value=5, value=4,
+
+    pool = _load_model_pool()
+    pool_size = len(pool)
+
+    num_llm = st.sidebar.number_input(
+        f"LLM Agent 数量（配置池共 {pool_size} 个模型）",
+        min_value=2, max_value=7, value=3,
     )
     max_rounds = st.sidebar.number_input(
-        "讨论轮数", min_value=1, max_value=20, value=num_agents,
+        "讨论轮数", min_value=1, max_value=20, value=num_llm + 1,
     )
 
-    # ── 单一人类 Agent 选择（下拉菜单） ──
-    human_agent_idx = st.sidebar.selectbox(
-        "人类参与者（选择第几个 Agent）",
-        options=list(range(1, num_agents + 1)),
-        format_func=lambda x: f"Agent {x}",
-        index=0,
-    )
-
-    pool = _load_model_pool()
-    model_keys = list(pool.keys()) if pool else []
-
-    agent_configs = []
+    st.sidebar.subheader("人类参与者角色")
     expert_keys = list(EXPERTS.keys())
+    role_source = st.sidebar.selectbox(
+        "角色来源", options=["预设角色", "自定义"], key="human_role_source",
+    )
+    if role_source == "预设角色":
+        expert_choice = st.sidebar.selectbox(
+            "选择专家", options=expert_keys, key="human_expert",
+        )
+        human_role = EXPERTS[expert_choice]
+    else:
+        human_role = st.sidebar.text_area("角色背景", value="", key="human_role", height=60)
 
-    for i in range(num_agents):
-        is_human = (i + 1 == human_agent_idx)
-        label = f"Agent {i + 1} {'👤 人类' if is_human else '🤖 LLM'}"
-        with st.sidebar.expander(label, expanded=(i == 0)):
-            role_source = st.selectbox(
-                "角色来源",
-                options=["预设角色", "自定义"],
-                key=f"role_source_{i}",
-            )
-            if role_source == "预设角色":
-                expert_choice = st.selectbox(
-                    "选择专家",
-                    options=expert_keys,
-                    index=i % len(expert_keys),
-                    key=f"expert_{i}",
-                )
-                role = EXPERTS[expert_choice]
-            else:
-                role = st.text_area("角色背景", value="", key=f"role_{i}", height=60)
-
-            model_key = None
-            if not is_human and model_keys:
-                model_key = st.selectbox(
-                    "LLM 模型",
-                    options=model_keys,
-                    index=0,
-                    key=f"model_key_{i}",
-                )
-
-            enable_identity = st.checkbox("启用身份提示词", value=False, key=f"enable_id_{i}")
-            identity_prompt = ""
-            if enable_identity:
-                identity_prompt = st.text_area("身份提示词", value="", key=f"id_prompt_{i}", height=60)
-
-            agent_configs.append({
-                "is_human": is_human,
-                "role": role,
-                "model_key": model_key,
-                "identity_prompt": identity_prompt if enable_identity else "",
-            })
-
-    # Leader-Worker 模式下人类自动为 Leader，无需手动配置
-    leader_ids = [human_agent_idx] if mode == "leader_worker" else []
-
-    return mode, topic, max_rounds, agent_configs, leader_ids
+    return mode, topic, max_rounds, num_llm, human_role
 
 
-# ── 从 llm_config.json 构建 Agent ──
+# ── 构建 Agent 列表 ──
 
-def build_agents(configs: list[dict]) -> list:
-    """构建 Agent 列表。LLM Agent 的 API 配置从 llm_config.json 加载。"""
-    pool = _load_model_pool()
+def build_agents(num_llm: int, human_role: str, pool: dict) -> list:
+    """构建 Agent 列表：1 个人类 + num_llm 个自动抽取的 LLM。
+
+    agent_id 不在此处设置，由 EnvBase 构造函数根据 shuffle 后的顺序动态分配。
+    """
     agents = []
-    for i, cfg in enumerate(configs):
-        agent_id = i + 1
-        if cfg["is_human"]:
-            agents.append(AgentHuman(
-                agent_id=agent_id,
-                role_background=cfg["role"],
-            ))
-        else:
-            model_key = cfg.get("model_key")
-            if model_key and model_key in pool:
-                agent = build_agent_from_config(agent_id, model_key, pool)
-                if cfg.get("role"):
-                    agent.role_background = cfg["role"]
-            else:
-                agent = AgentLLM(
-                    agent_id=agent_id,
-                    role_background=cfg["role"],
-                    api_config={"api_key": "EMPTY", "base_url": "http://localhost:8000/v1"},
-                    inference_config={"model": "unknown", "temperature": 0.7},
-                )
-            agents.append(agent)
+
+    agents.append(AgentHuman(role_background=human_role))
+
+    sampled_keys = sample_llm_keys(pool, num_llm)
+    expert_keys = list(EXPERTS.keys())
+    random.shuffle(expert_keys)
+
+    for i, config_key in enumerate(sampled_keys):
+        agent = build_agent_from_config(config_key, pool)
+        if not agent.role_background:
+            agent.role_background = EXPERTS[expert_keys[i % len(expert_keys)]]
+        agents.append(agent)
+
     return agents
 
 
@@ -293,6 +272,9 @@ def render_status(env):
 def render_final_ranking_form(env):
     """讨论结束后，人类对所有其他 Agent 进行一次总排名。
 
+    排名结果使用 position（动态展示序号）和 config_key（配置键名）标识，
+    不再使用旧的 agent_id / agent_name 字符串。
+
     Returns True 表示排名已提交，False 表示尚未提交或校验失败。
     """
     others = [a for a in env.agents if not a.is_human]
@@ -326,13 +308,13 @@ def render_final_ranking_form(env):
             ranking_data = []
             for agent in others:
                 ranking_data.append({
-                    "agent_id": agent.agent_id,
-                    "agent_name": agent.display_name,
+                    "position": agent.agent_id,
+                    "config_key": agent.config_key,
                     "rank": rankings[agent.agent_id],
                 })
             ranking_data.sort(key=lambda x: x["rank"])
 
-            env.round_rankings = {"final": ranking_data}
+            env.final_rankings = ranking_data
             st.session_state.pending_final_ranking = False
             return True
 
@@ -344,7 +326,7 @@ def main():
     st.title("🧠 Brainstorm 头脑风暴系统")
 
     init_session_state()
-    mode, topic, max_rounds, agent_configs, leader_ids = render_sidebar()
+    mode, topic, max_rounds, num_llm, human_role = render_sidebar()
 
     # ── 尚未开始：等待用户点击"开始讨论" ──
     if not st.session_state.started:
@@ -354,10 +336,13 @@ def main():
                 st.error("请输入讨论话题！")
                 return
 
-            agents = build_agents(agent_configs)
+            pool = _load_model_pool()
+            agents = build_agents(num_llm, human_role, pool)
             random.shuffle(agents)
+
             env_cls = ENV_MAP[mode]
             if mode == "leader_worker":
+                leader_ids = [i + 1 for i, a in enumerate(agents) if a.is_human]
                 env = env_cls(
                     agents=agents,
                     topic=topic,

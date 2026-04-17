@@ -65,10 +65,10 @@ def parse_args():
 
 
 def build_agents_from_models(model_keys: list[str], pool: dict) -> list[AgentLLM]:
-    """根据 model key 列表构建 Agent，顺序即 position。"""
+    """根据 model key 列表构建 Agent，agent_id 由 EnvBase 构造函数根据列表顺序自动分配。"""
     agents = []
-    for i, key in enumerate(model_keys):
-        agent = build_agent_from_config(agent_id=i + 1, model_key=key, pool=pool)
+    for key in model_keys:
+        agent = build_agent_from_config(model_key=key, pool=pool)
         agents.append(agent)
     return agents
 
@@ -76,8 +76,7 @@ def build_agents_from_models(model_keys: list[str], pool: dict) -> list[AgentLLM
 def build_agents_legacy(agents_json: list[dict]) -> list[AgentLLM]:
     """旧版 --agents JSON 构建方式（向后兼容）。"""
     agents = []
-    for i, cfg in enumerate(agents_json):
-        agent_id = i + 1
+    for cfg in agents_json:
         api_config = {
             "api_key": cfg["api_key"],
             "base_url": cfg["base_url"],
@@ -91,7 +90,6 @@ def build_agents_legacy(agents_json: list[dict]) -> list[AgentLLM]:
             inference_config["max_tokens"] = cfg["max_tokens"]
 
         agents.append(AgentLLM(
-            agent_id=agent_id,
             role_background=cfg.get("role", ""),
             api_config=api_config,
             inference_config=inference_config,
@@ -138,7 +136,7 @@ def main():
     print(f"[主题] {args.topic}")
     for a in agents:
         model = getattr(a, "inference_config", {}).get("model", "unknown")
-        print(f"  {a.display_name} -> {model}")
+        print(f"  {a.display_name} -> {model} (config_key={a.config_key})")
     print("-" * 60)
 
     step_count = 0

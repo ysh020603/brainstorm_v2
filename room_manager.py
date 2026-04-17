@@ -42,7 +42,6 @@ class RoomState:
     topic: str
     human_seats: list[int]
     claimed_seats: dict[int, str] = field(default_factory=dict)
-    agent_configs: list[dict] = field(default_factory=list)
     leader_ids: list[int] = field(default_factory=list)
     llm_lock: threading.Lock = field(default_factory=threading.Lock)
     created_at: float = field(default_factory=time.time)
@@ -71,36 +70,46 @@ def _load_pool():
         return {}
 
 
-def _build_agents(agent_configs: list[dict], human_seats: list[int]) -> list:
-    pool = _load_pool()
-    model_keys = list(pool.keys())
+def sample_llm_keys(pool: dict, num_llm: int) -> list[str]:
+    """从 llm_agents_pool 中抽取 config_key 列表。
 
+    - num_llm <= pool size: 无放回随机抽取
+    - num_llm >  pool size: 先全部取出，余额有放回补齐
+    """
+    keys = list(pool.keys())
+    if not keys:
+        return []
+    if num_llm <= len(keys):
+        return random.sample(keys, num_llm)
+    result = list(keys)
+    remaining = num_llm - len(keys)
+    result.extend(random.choices(keys, k=remaining))
+    random.shuffle(result)
+    return result
+
+
+def _build_agents(num_humans: int, num_llm: int, human_roles: list[str]) -> list:
+    """构建 Agent 列表：多个人类 + 自动抽取的 LLM。
+
+    agent_id 由 EnvBase 构造函数在 shuffle 后根据列表顺序动态分配。
+    """
+    pool = _load_pool()
     agents = []
-    for i, cfg in enumerate(agent_configs):
-        agent_id = i + 1
-        if agent_id in human_seats:
-            agents.append(AgentHuman(
-                agent_id=agent_id,
-                role_background=cfg.get("role", "人类专家"),
-            ))
-        else:
-            model_key = cfg.get("model_key")
-            if model_key and model_key in pool:
-                agent = build_agent_from_config(agent_id, model_key, pool)
-                if cfg.get("role"):
-                    agent.role_background = cfg["role"]
-            elif model_keys:
-                agent = build_agent_from_config(agent_id, model_keys[0], pool)
-                if cfg.get("role"):
-                    agent.role_background = cfg["role"]
-            else:
-                agent = AgentLLM(
-                    agent_id=agent_id,
-                    role_background=cfg.get("role", ""),
-                    api_config={"api_key": "EMPTY", "base_url": "http://localhost:8000/v1"},
-                    inference_config={"model": "unknown", "temperature": 0.7},
-                )
-            agents.append(agent)
+
+    for i in range(num_humans):
+        role = human_roles[i] if i < len(human_roles) else "人类专家"
+        agents.append(AgentHuman(role_background=role))
+
+    sampled_keys = sample_llm_keys(pool, num_llm)
+    expert_keys = list(EXPERTS.keys())
+    random.shuffle(expert_keys)
+
+    for i, config_key in enumerate(sampled_keys):
+        agent = build_agent_from_config(config_key, pool)
+        if not agent.role_background:
+            agent.role_background = EXPERTS[expert_keys[i % len(expert_keys)]]
+        agents.append(agent)
+
     return agents
 
 
@@ -108,23 +117,28 @@ def create_room(
     mode: str,
     topic: str,
     max_rounds: int,
-    agent_configs: list[dict],
-    human_seats: list[int],
-    leader_ids: list[int] | None = None,
+    num_humans: int,
+    num_llm: int,
+    human_roles: list[str] | None = None,
 ) -> str:
-    """创建房间，实例化 env 并初始化，返回房间号。"""
+    """创建房间，实例化 env 并初始化，返回房间号。
+
+    LLM Agent 从 pool 中自动盲抽，不再接受手动配置。
+    """
     with _rooms_lock:
         room_id = _generate_room_id()
 
-        agents = _build_agents(agent_configs, human_seats)
+        agents = _build_agents(num_humans, num_llm, human_roles or [])
         random.shuffle(agents)
+
         env_cls = ENV_MAP[mode]
         if mode == "leader_worker":
+            leader_ids = [i + 1 for i, a in enumerate(agents) if a.is_human]
             env = env_cls(
                 agents=agents,
                 topic=topic,
                 max_rounds=max_rounds,
-                leader_ids=leader_ids or [],
+                leader_ids=leader_ids,
                 log_dir=_LOG_DIR,
             )
         else:
@@ -136,13 +150,14 @@ def create_room(
             )
         env.init()
 
+        human_seats = [a.agent_id for a in agents if a.is_human]
+
         room = RoomState(
             env=env,
             mode=mode,
             topic=topic,
-            human_seats=list(human_seats),
-            agent_configs=agent_configs,
-            leader_ids=leader_ids or [],
+            human_seats=human_seats,
+            leader_ids=list(leader_ids) if mode == "leader_worker" else [],
         )
         _rooms[room_id] = room
         return room_id
@@ -229,8 +244,8 @@ def save_and_get_log(room_id: str) -> str | None:
 
         position_map = [
             {
-                "position": a.position,
-                "agent_id": a.agent_id,
+                "position": a.agent_id,
+                "config_key": a.config_key,
                 "type": "human" if a.is_human else "llm",
                 "model": getattr(a, "inference_config", {}).get("model", "human"),
             }
@@ -257,7 +272,7 @@ def save_and_get_log(room_id: str) -> str | None:
             rankings = {}
             for human_aid, rdata in room.rankings_submitted.items():
                 rankings[str(human_aid)] = rdata
-            log_data["round_rankings"] = rankings
+            log_data["final_rankings"] = rankings
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(log_data, f, ensure_ascii=False, indent=2)

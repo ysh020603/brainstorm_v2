@@ -11,7 +11,11 @@ from prompts import instruct_prompts as IP
 
 
 class EnvBase:
-    """讨论环境基类，采用步进式 (step-by-step) 状态机驱动。"""
+    """讨论环境基类，采用步进式 (step-by-step) 状态机驱动。
+
+    构造函数负责根据 agents 列表的顺序动态分配 agent_id（从 1 开始递增），
+    该 agent_id 同时作为展示序号和唯一标识，不再依赖构造 Agent 时的静态绑定。
+    """
 
     mode: str = "base"
 
@@ -33,6 +37,8 @@ class EnvBase:
         self.round_order: list[AgentBase] = []
         self.state: EnvState = EnvState.WAITING_LLM
 
+        for i, agent in enumerate(agents):
+            agent.agent_id = i + 1
         self._agent_map: dict[int, AgentBase] = {a.agent_id: a for a in agents}
 
     # ------------------------------------------------------------------
@@ -40,11 +46,7 @@ class EnvBase:
     # ------------------------------------------------------------------
 
     def init(self):
-        """初始化讨论：分配 position，为每个 Agent 设置 system prompt，准备第一轮发言顺序。"""
-        for i, agent in enumerate(self.agents):
-            agent.position = i + 1
-        self._agent_map = {a.agent_id: a for a in self.agents}
-
+        """初始化讨论：为每个 Agent 设置 system prompt，准备第一轮发言顺序。"""
         for agent in self.agents:
             agent.system_prompt = build_system_prompt(
                 mode=self.mode,
@@ -210,6 +212,7 @@ class EnvBase:
             "round": self.current_round,
             "agent_id": agent.agent_id,
             "agent_name": agent.display_name,
+            "config_key": agent.config_key,
             "content": content,
         })
 
@@ -266,8 +269,8 @@ class EnvBase:
 
         position_map = [
             {
-                "position": a.position,
-                "agent_id": a.agent_id,
+                "position": a.agent_id,
+                "config_key": a.config_key,
                 "type": "human" if a.is_human else "llm",
                 "model": getattr(a, "inference_config", {}).get("model", "human"),
             }
@@ -289,8 +292,8 @@ class EnvBase:
             "final_messages": final_messages,
         }
 
-        if hasattr(self, "round_rankings") and self.round_rankings:
-            log_data["round_rankings"] = self.round_rankings
+        if hasattr(self, "final_rankings") and self.final_rankings:
+            log_data["final_rankings"] = self.final_rankings
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(log_data, f, ensure_ascii=False, indent=2)

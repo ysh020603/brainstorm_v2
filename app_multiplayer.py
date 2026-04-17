@@ -2,6 +2,9 @@
 """Brainstorm 局域网多人联机前端。
 
 启动：streamlit run app_multiplayer.py --server.address 0.0.0.0
+
+Human Evaluation 模式下，LLM Agent 从 llm_agents_pool 中自动盲抽，
+用户仅需选择 LLM 数量，无需手动配置具体模型。
 """
 
 import sys
@@ -54,7 +57,7 @@ def _reset_session():
     st.rerun()
 
 
-# ── 渲染辅助函数（从 app.py 复制核心逻辑，避免修改原文件） ──
+# ── 渲染辅助函数 ──
 
 def render_brainwrite_history(env):
     n = len(env.agents)
@@ -165,60 +168,46 @@ def _render_create_room():
     else:
         topic = st.text_area("话题内容", value=TOPICS[topic_key], height=80, key="create_topic")
 
-    num_agents = st.number_input(
-        "Agent 总数", min_value=3, max_value=5, value=4, key="create_num_agents",
+    num_humans = st.number_input(
+        "人类参与者数量", min_value=2, max_value=4, value=2, key="create_num_humans",
     )
+
+    pool = rm._load_pool()
+    pool_size = len(pool)
+
+    num_llm = st.number_input(
+        f"LLM Agent 数量（配置池共 {pool_size} 个模型）",
+        min_value=1, max_value=5, value=2, key="create_num_llm",
+    )
+
     max_rounds = st.number_input(
-        "讨论轮数", min_value=1, max_value=20, value=num_agents, key="create_max_rounds",
+        "讨论轮数", min_value=1, max_value=20, value=num_humans + num_llm,
+        key="create_max_rounds",
     )
 
-    human_seats = st.multiselect(
-        "人类参与者（选择哪些 Agent 由真人操控，至少 2 个）",
-        options=list(range(1, num_agents + 1)),
-        default=[1, 2] if num_agents >= 2 else [1],
-        format_func=lambda x: f"Agent {x}",
-        key="create_human_seats",
-    )
-
-    if mode == "leader_worker":
-        leader_choices = st.multiselect(
-            "Leader（从人类参与者中选择）",
-            options=human_seats if human_seats else [1],
-            default=[human_seats[0]] if human_seats else [1],
-            format_func=lambda x: f"Agent {x}",
-            key="create_leaders",
-        )
-    else:
-        leader_choices = []
-
-    agent_configs = []
+    st.subheader("人类参与者角色")
     expert_keys = list(EXPERTS.keys())
-    for i in range(num_agents):
-        is_human = (i + 1) in human_seats
-        label = f"Agent {i + 1} {'👤 人类' if is_human else '🤖 LLM'}"
-        with st.expander(label, expanded=(i == 0)):
+    human_roles = []
+    for i in range(num_humans):
+        with st.expander(f"人类 {i + 1} 角色配置", expanded=(i == 0)):
             role_source = st.selectbox(
-                "角色来源",
-                options=["预设角色", "自定义"],
-                key=f"cr_role_source_{i}",
+                "角色来源", options=["预设角色", "自定义"], key=f"cr_role_source_{i}",
             )
             if role_source == "预设角色":
                 expert_choice = st.selectbox(
-                    "选择专家",
-                    options=expert_keys,
-                    index=i % len(expert_keys),
-                    key=f"cr_expert_{i}",
+                    "选择专家", options=expert_keys,
+                    index=i % len(expert_keys), key=f"cr_expert_{i}",
                 )
                 role = EXPERTS[expert_choice]
             else:
                 role = st.text_area("角色背景", value="", key=f"cr_role_{i}", height=60)
-            agent_configs.append({"role": role})
+            human_roles.append(role)
 
     if st.button("创建房间", type="primary", key="btn_create"):
         if not topic.strip():
             st.error("请输入讨论话题！")
             return
-        if len(human_seats) < 2:
+        if num_humans < 2:
             st.error("联机模式至少需要 2 个人类参与者！")
             return
 
@@ -226,9 +215,9 @@ def _render_create_room():
             mode=mode,
             topic=topic,
             max_rounds=max_rounds,
-            agent_configs=agent_configs,
-            human_seats=human_seats,
-            leader_ids=leader_choices,
+            num_humans=num_humans,
+            num_llm=num_llm,
+            human_roles=human_roles,
         )
         st.session_state.room_id = room_id
         st.session_state.phase = "claim_host"
@@ -278,15 +267,15 @@ def render_claim_seat(is_host: bool):
 
     st.subheader("选择你的座位")
     for aid in unclaimed:
-        cfg = room.agent_configs[aid - 1]
+        agent = room.env.get_agent(aid)
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.write(f"**Agent {aid}**")
-            role_text = cfg.get("role", "")
+            st.write(f"**{agent.display_name}**")
+            role_text = agent.role_background or ""
             if role_text:
                 st.caption(role_text[:100] + ("..." if len(role_text) > 100 else ""))
         with col2:
-            if st.button(f"认领 Agent {aid}", key=f"claim_{aid}"):
+            if st.button(f"认领 {agent.display_name}", key=f"claim_{aid}"):
                 sid = _get_session_id()
                 ok = rm.claim_seat(room_id, aid, sid)
                 if ok:
@@ -318,12 +307,13 @@ def render_waiting_players():
 
     st.subheader("座位状态")
     for aid in room.human_seats:
+        agent = room.env.get_agent(aid)
         if aid in room.claimed_seats:
             is_me = (aid == st.session_state.my_agent_id)
             tag = " (你)" if is_me else ""
-            st.success(f"Agent {aid}：已认领{tag}")
+            st.success(f"{agent.display_name}：已认领{tag}")
         else:
-            st.warning(f"Agent {aid}：等待中...")
+            st.warning(f"{agent.display_name}：等待中...")
 
     if rm.is_room_ready(room_id):
         st.balloons()
@@ -442,16 +432,19 @@ def render_ranking():
         st_autorefresh(interval=3000, key="rank_wait_refresh")
         st.subheader("排名提交状态")
         for aid in room.human_seats:
+            agent = env.get_agent(aid)
             if aid in room.rankings_submitted:
-                st.success(f"Agent {aid}：已提交")
+                st.success(f"{agent.display_name}：已提交")
             else:
-                st.warning(f"Agent {aid}：等待中...")
+                st.warning(f"{agent.display_name}：等待中...")
 
 
 def _render_ranking_form(room, env, my_agent_id: int):
     others = [a for a in env.agents if a.agent_id != my_agent_id]
+    room_id = st.session_state.room_id
+
     if not others:
-        rm.submit_ranking(room.env, my_agent_id, [])
+        rm.submit_ranking(room_id, my_agent_id, [])
         st.rerun()
         return
 
@@ -459,7 +452,6 @@ def _render_ranking_form(room, env, my_agent_id: int):
     st.info("请根据整场讨论中各位专家的综合表现进行排名（1 = 最佳）")
 
     num_others = len(others)
-    room_id = st.session_state.room_id
 
     with st.form("ranking_form"):
         rankings = {}
@@ -484,8 +476,8 @@ def _render_ranking_form(room, env, my_agent_id: int):
             ranking_data = []
             for agent in others:
                 ranking_data.append({
-                    "agent_id": agent.agent_id,
-                    "agent_name": agent.display_name,
+                    "position": agent.agent_id,
+                    "config_key": agent.config_key,
                     "rank": rankings[agent.agent_id],
                 })
             ranking_data.sort(key=lambda x: x["rank"])

@@ -6,8 +6,8 @@ from .agent_base import AgentBase
 class AgentHuman(AgentBase):
     """人类参与者占位 Agent，等待外部输入。"""
 
-    def __init__(self, agent_id: int, role_background: str = "人类专家"):
-        super().__init__(agent_id, role_background)
+    def __init__(self, role_background: str = "人类专家"):
+        super().__init__(role_background, config_key="human")
         self._pending_input: str | None = None
 
     @property
