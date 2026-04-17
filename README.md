@@ -15,6 +15,14 @@
 - **可见性隔离**，不同模式下 Agent 看到的信息严格按规则过滤
 - **全自动盲抽**，Human Evaluation 模式下 LLM Agent 从配置池中随机抽取，确保实验公正
 
+### 三种实验形态
+
+| 实验形态 | 入口 | 目的 | 人类数量 |
+|----------|------|------|----------|
+| **纯 LLM 实验** | `run_batch.sh` / `main_batch.py` | 测试不同 LLM 在头脑风暴中的表现 | 0 |
+| **Single Human 实验** | `app.py` | 1 个人类与多个不同 LLM 讨论，收集人类对各 LLM 的偏好排名 | 1 |
+| **Multiplayer 实验** | `app_multiplayer.py` | 多个人类与多个 LLM 共同讨论，直观衡量 Human 与 LLM 的能力差距 | 2–4 |
+
 ## 讨论模式
 
 ### BrainWrite（脑力书写）
@@ -56,15 +64,18 @@ brainstorm_v2/
 ├── tools/
 │   ├── config_loader.py        # LLM 配置加载与 Agent 工厂
 │   └── call_openai.py          # OpenAI 兼容 API 调用封装
-├── app.py                      # 单机 Streamlit 前端（1 个人类）
-├── app_multiplayer.py          # 局域网联机 Streamlit 前端（多人类）
+├── config/
+│   └── llm_config.json         # LLM 模型池配置（API 地址、密钥、推理参数）
+├── app.py                      # Single Human 实验前端（1 人类 + N 个 LLM）
+├── app_multiplayer.py          # Multiplayer 实验前端（多人类 + N 个 LLM）
 ├── room_manager.py             # 联机房间全局状态管理器
-├── main_batch.py               # 纯 LLM 批量运行入口
-├── run_batch.sh                # 批量测试脚本
+├── main_batch.py               # 纯 LLM 批量实验入口
+├── run_batch.sh                # 纯 LLM 批量实验脚本
+├── api_test.py                 # LLM API 连通性检测工具
 ├── requirements.txt            # Python 依赖
-├── log/                        # 纯 LLM 批量测试日志
-├── log_human/                  # 单人类测试日志
-└── log_human_2/                # 多人联机测试日志
+├── log/                        # 纯 LLM 实验日志
+├── log_human/                  # Single Human 实验日志
+└── log_human_2/                # Multiplayer 实验日志
 ```
 
 ## 架构设计
@@ -82,10 +93,25 @@ Agent 的唯一标识（`agent_id`）**不在构造时静态绑定**，而是采
 
 每个 Agent 携带一个 `config_key` 字段，用于标识其配置来源：
 
-- **LLM Agent**：对应 `llm_agents_pool` 字典中的外层键名（如 `"model_a"`, `"qwen3_8b_local"`），可据此追溯底层调用的实际模型和参数配置。
+- **LLM Agent**：对应 `llm_agents_pool` 字典中的外层键名（如 `"DeepSeek-V3.2"`, `"Qwen3-32B-thinking"`），可据此追溯底层调用的实际模型和参数配置。
 - **Human Agent**：固定为 `"human"`。
 
 该字段在 Agent 初始化日志、对话历史（`global_history`）以及最终打分日志中均有记录。
+
+### 模型选取机制
+
+系统根据不同的实验形态采用不同的模型选取策略：
+
+**纯 LLM 实验**（`main_batch.py`）：
+- 通过 `--models` 参数**显式指定**每个位置使用的 `config_key`，顺序即 position
+- 支持同一模型占据多个位置（如 `"qwen3_8b_local,qwen3_8b_local,qwen3_8b_local,qwen3_8b_local"`）
+- Agent 列表**不做 shuffle**，位置顺序即参数顺序
+
+**Single Human / Multiplayer 实验**（`app.py` / `app_multiplayer.py`）：
+- 用户仅指定 LLM 数量，系统从 `llm_agents_pool` 中**自动随机盲抽**
+- 盲抽规则：数量 ≤ 池大小时**无放回**随机抽取；数量 > 池大小时先全选再**有放回**补齐
+- 抽取后所有 Agent（含人类）随机 shuffle，动态分配 `agent_id`
+- 人类参与者在实验过程中**无法得知**每个 LLM Agent 背后的具体模型，确保评价的公正性
 
 ### 状态机
 
@@ -148,20 +174,71 @@ build_messages_for_agent()   组装完整 OpenAI messages 列表
 pip install -r requirements.txt
 ```
 
-### 纯 LLM 批量测试
+### API 连通性检测
+
+在运行任何实验之前，建议先使用 `api_test.py` 验证 `llm_config.json` 中配置的所有 LLM API 端点是否可用：
+
+```bash
+# 测试配置池中的全部模型
+python api_test.py
+
+# 指定配置文件路径
+python api_test.py --config config/llm_config.json
+
+# 仅测试某个特定模型
+python api_test.py --model DeepSeek-V3.2
+```
+
+**工作原理**：`api_test.py` 按照与 `config_loader.build_agent_from_config` 完全一致的方式构建 `api_config` / `inference_config`，向每个端点发送一条简短的探测消息（`"只回复一个字：好"`），并报告连通状态：
+
+```
+[OK  ] qwen2.5_14B: 好
+[OK  ] DeepSeek-V3.2: 好
+[FAIL] GLM-4.7: ConnectionError: ...
+```
+
+- `OK` 表示 API 端点可达且返回了有效响应
+- `FAIL` 表示连接失败或返回错误，需检查 API 地址、密钥或模型服务是否在线
+
+> **注意**：该工具不使用配置中的 `enable_identity` / `identity_prompt` 字段，仅测试 API 层面的连通性。
+
+### 实验一：纯 LLM 实验
+
+**目的**：测试不同 LLM 在头脑风暴任务中的表现，全自动运行，无需人类参与。
 
 ```bash
 bash run_batch.sh
 ```
 
-自动遍历四种模式，无需人类参与。所有 Agent 均为 LLM，由 `main_batch.py` 驱动，无交互界面。日志保存到 `log/`。
-
 **运行机制**：
-1. `run_batch.sh` 遍历预定义的模式列表，依次调用 `main_batch.py`
-2. `main_batch.py` 从 `llm_agents_pool` 中抽取全部 LLM Agent，构建环境并自动运行到讨论结束
-3. 全程无需人工干预，适合大规模自动化实验
 
-### 单人类交互（Human Evaluation / Single Human）
+1. **配置**：在 `run_batch.sh` 顶部的配置区域设定参数：
+   - `CONFIG`：指定 `llm_config.json` 路径
+   - `MODELS`：逗号分隔的 `config_key` 列表，顺序即各 Agent 的 position（如 `"qwen3_8b_local,qwen3_8b_local,qwen3_8b_local,qwen3_8b_local"` 表示 4 个位置都使用同一模型）
+   - `TOPIC`：讨论主题
+
+2. **执行**：脚本遍历 `brainwrite`、`round_robin`、`random`、`leader_worker` 四种模式，对每种模式调用 `main_batch.py`
+
+3. **模型选取**：通过 `--models` 参数**显式指定**每个位置使用哪个 `config_key`。`main_batch.py` 从 `llm_config.json` 中读取对应的 API 地址、密钥和推理参数，构建 `AgentLLM` 实例。Agent 列表不做 shuffle，位置顺序即参数顺序
+
+4. **讨论推进**：`env.step()` 循环执行直到 `EnvState.FINISHED`，全程无交互
+
+5. **结果保存**：日志保存到 `log/` 目录，文件命名格式 `{模式}_{Agent数}_{人类数}_{时间戳}.json`
+
+也可以直接调用 `main_batch.py` 进行单次实验：
+
+```bash
+python main_batch.py \
+  --config config/llm_config.json \
+  --models "DeepSeek-V3.2,Qwen3-32B-thinking,GLM-4.7,Kimi-k2.5" \
+  --mode brainwrite \
+  --rounds 4 \
+  --topic "人工智能技术能怎样帮助解决三体问题？"
+```
+
+### 实验二：Single Human 实验
+
+**目的**：让 1 个人类与多个不同的 LLM Agent 进行头脑风暴讨论，讨论结束后收集人类对各 LLM 的**偏好排名**（即人类更喜欢哪个 LLM 的表现），用于评估不同 LLM 在人类眼中的讨论能力。
 
 ```bash
 streamlit run app.py
@@ -176,31 +253,69 @@ streamlit run app.py
 5. 点击"开始讨论"
 
 **运行机制**：
-1. **初始化**：系统从 `llm_agents_pool` 中随机抽取指定数量的 LLM Agent，与 1 个人类 Agent 一起随机打乱顺序，动态分配 Agent 编号
-2. **讨论推进**：`auto_advance_llm()` 连续推进 LLM 发言，遇到人类回合时暂停等待输入。人类提交发言后继续推进 LLM，直到所有轮次结束
-3. **排名阶段**：讨论结束后，人类对所有其他 Agent 进行排名评价。排名采用联动 `selectbox`，自动避免名次冲突
-4. **排名校验**：提交时执行**严格全序校验**——排名值必须恰好构成 `{1, 2, ..., N}` 且无重复。校验失败时保持 UI 状态不变，弹出错误提示，不写入数据
-5. **日志保存**：排名通过后，完整日志（含讨论历史、每位 Agent 的上下文视角、最终排名）保存到 `log_human/`
 
-### 局域网多人联机（Multiplayer）
+1. **模型选取与初始化**：
+   - 系统从 `llm_config.json` 的 `llm_agents_pool` 中随机盲抽指定数量的 LLM Agent
+   - 盲抽规则：数量 ≤ 池大小时**无放回**随机抽取（保证模型多样性）；数量 > 池大小时先全选再**有放回**补齐
+   - 抽取的 LLM Agent 与 1 个人类 Agent 一起随机 shuffle 打乱顺序
+   - 按打乱后的顺序动态分配 Agent 编号（Agent 1, Agent 2, ...），人类**无法得知**每个 Agent 背后的具体模型
+
+2. **讨论推进**：
+   - `auto_advance_llm()` 连续推进 LLM 发言，遇到人类回合时暂停，在 UI 上展示当前讨论上下文
+   - 人类在文本框中输入观点并提交后，系统继续推进 LLM 发言
+   - 重复上述过程直到所有轮次结束
+
+3. **排名阶段**：
+   - 讨论结束后，人类对所有其他 Agent（均为 LLM）进行排名评价（1 = 最佳）
+   - 排名采用联动 `selectbox`，修改一个 Agent 的名次时，冲突的 Agent 自动交换到原名次
+   - 提交时执行**严格全序校验**——排名值必须恰好构成 `{1, 2, ..., N}` 且无重复；校验失败时保持 UI 状态不变，弹出错误提示，不写入数据
+
+4. **结果保存**：
+   - 排名通过后，完整日志保存到 `log_human/` 目录
+   - 日志中 `final_rankings` 为排名数组，每项包含 `position`（Agent 编号）、`config_key`（模型标识）和 `rank`（排名）
+   - 通过 `config_key` 可追溯每个 Agent 对应的实际模型，从而分析人类对不同 LLM 的偏好
+
+### 实验三：Multiplayer 实验
+
+**目的**：让多个人类与多个 LLM Agent 共同参与头脑风暴讨论。讨论结束后每位人类独立对所有其他参与者（包括其他人类和 LLM）排名，用于**直观衡量 Human 与 LLM 之间的能力差距**——人类在不知道对方身份的情况下，是否能分辨出 LLM 和人类，以及各自的排名位置。
 
 ```bash
 streamlit run app_multiplayer.py --server.address 0.0.0.0
 ```
 
 **创建与加入**：
-1. 房主创建房间：配置讨论模式、话题、人类参与者数量和 LLM 数量（LLM 自动盲抽）
-2. 创建后获得 4 位数字房间号，分享给队友
-3. 其他玩家通过房间号加入，认领角色座位
+
+1. 房主在浏览器中创建房间：配置讨论模式、话题、人类参与者数量（2–4）和 LLM 数量
+2. 创建后获得 4 位数字房间号，分享给同一局域网内的队友
+3. 其他玩家在浏览器中输入房间号加入，浏览可用角色并认领座位
 
 **运行机制**：
-1. **等待阶段**：所有人类玩家认领座位后，系统自动执行 LLM 初始推进，进入讨论阶段
-2. **讨论推进**：与单机模式类似，遇到人类回合时等待对应玩家输入。其他玩家通过 `streamlit-autorefresh` 自动轮询看到状态更新。当前发言者以外的玩家显示等待界面
-3. **排名阶段**：讨论结束后，每位人类玩家独立对其他所有 Agent 排名。排名采用联动 `selectbox` 防止名次冲突
-4. **双重校验**：
-   - **前端校验**：提交前在客户端执行严格全序校验，拦截非法数据
-   - **后端校验**：`room_manager.submit_ranking()` 在写入房间状态前再次执行服务端校验。校验失败时拒绝写入，该玩家保持"未提交"状态，不影响其他已提交的玩家
-5. **日志保存**：所有人类玩家提交排名后，日志保存到 `log_human_2/`，`final_rankings` 为字典形式（键为人类 `agent_id`）
+
+1. **模型选取与初始化**：
+   - 与 Single Human 实验相同，LLM 从配置池中自动盲抽
+   - 多个人类 Agent + 抽取的 LLM Agent 一起随机 shuffle 后动态分配编号
+   - 任何参与者都**无法得知**其他 Agent 的真实身份（人类还是 LLM）
+
+2. **等待阶段**：
+   - 所有人类玩家通过房间号加入并认领座位
+   - 全员就位后，系统自动执行 LLM 初始推进（在 `room.llm_lock` 保护下仅执行一次），进入讨论阶段
+
+3. **讨论推进**：
+   - 遇到人类回合时，等待对应玩家输入；其他玩家通过 `streamlit-autorefresh` 自动轮询看到状态更新
+   - 当前非发言者显示等待界面，避免干扰
+   - 人类提交发言后，系统在 `llm_lock` 保护下继续推进 LLM 发言
+
+4. **排名阶段**：
+   - 讨论结束后，每位人类玩家**独立**对所有其他 Agent（含其他人类和 LLM）排名
+   - 排名采用联动 `selectbox` 防止名次冲突
+   - **双重校验**：
+     - **前端校验**：提交前在客户端执行严格全序校验，拦截非法数据
+     - **后端校验**：`room_manager.submit_ranking()` 在写入房间状态前再次执行服务端校验。校验失败时拒绝写入，该玩家保持"未提交"状态，不影响其他已提交的玩家
+
+5. **结果保存**：
+   - 所有人类玩家提交排名后，日志保存到 `log_human_2/` 目录
+   - `final_rankings` 为字典形式，键为提交排名的人类 `agent_id`，值为该人类给出的排名数组
+   - 通过交叉对比多位人类的排名结果和 `config_key` 标识，可分析人类与 LLM 之间的能力差距
 
 ## 日志格式
 
@@ -218,10 +333,10 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
     "agents": [
       {
         "agent_id": 1,
-        "config_key": "model_a",
+        "config_key": "DeepSeek-V3.2",
         "type": "llm",
         "role_background": "创新设计师...",
-        "model": "gpt-4o",
+        "model": "deepseek-chat",
         "temperature": 0.7,
         "top_p": null,
         "max_tokens": null
@@ -234,10 +349,10 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
       }
     ],
     "position_map": [
-      {"position": 1, "config_key": "model_a", "type": "llm", "model": "gpt-4o"},
+      {"position": 1, "config_key": "DeepSeek-V3.2", "type": "llm", "model": "deepseek-chat"},
       {"position": 2, "config_key": "human", "type": "human", "model": "human"},
-      {"position": 3, "config_key": "model_b_reasoning", "type": "llm", "model": "deepseek-r1"},
-      {"position": 4, "config_key": "model_a", "type": "llm", "model": "gpt-4o"}
+      {"position": 3, "config_key": "Qwen3-32B-thinking", "type": "llm", "model": "Qwen3-32B"},
+      {"position": 4, "config_key": "GLM-4.7", "type": "llm", "model": "glm-4.7"}
     ]
   },
   "global_history": [
@@ -245,7 +360,7 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
       "round": 1,
       "agent_id": 1,
       "agent_name": "Agent 1",
-      "config_key": "model_a",
+      "config_key": "DeepSeek-V3.2",
       "content": "..."
     }
   ],
@@ -253,9 +368,9 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
     "1": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
   },
   "final_rankings": [
-    {"position": 4, "config_key": "model_a", "rank": 1},
-    {"position": 1, "config_key": "model_a", "rank": 2},
-    {"position": 3, "config_key": "model_b_reasoning", "rank": 3}
+    {"position": 4, "config_key": "GLM-4.7", "rank": 1},
+    {"position": 1, "config_key": "DeepSeek-V3.2", "rank": 2},
+    {"position": 3, "config_key": "Qwen3-32B-thinking", "rank": 3}
   ]
 }
 ```
@@ -273,10 +388,17 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
 
 **排名结构说明**：
 
-- 单机模式（`app.py`）：`final_rankings` 为排名数组
-- 联机模式（`app_multiplayer.py`）：`final_rankings` 为字典，键为提交排名的人类 `agent_id`，值为对应的排名数组
+- 纯 LLM 实验：无 `final_rankings` 字段（无人类参与排名）
+- Single Human 实验（`app.py`）：`final_rankings` 为排名数组
+- Multiplayer 实验（`app_multiplayer.py`）：`final_rankings` 为字典，键为提交排名的人类 `agent_id`，值为对应的排名数组
 
-文件命名：`{模式}_{Agent数}_{人类数}_{时间戳}.json`
+**日志目录与文件命名**：
+
+| 实验形态 | 日志目录 | 文件命名 |
+|----------|----------|----------|
+| 纯 LLM | `log/` | `{模式}_{Agent数}_0_{时间戳}.json` |
+| Single Human | `log_human/` | `{模式}_{Agent数}_1_{时间戳}.json` |
+| Multiplayer | `log_human_2/` | `{模式}_{Agent数}_{人类数}_{时间戳}.json` |
 
 ## 配置文件
 
@@ -285,10 +407,10 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
 ```json
 {
   "llm_agents_pool": {
-    "model_a": {
-      "api_url": "https://api.example.com/v1",
+    "DeepSeek-V3.2": {
+      "api_url": "https://api.deepseek.com/v1",
       "api_key": "your-api-key",
-      "model_name": "gpt-4o",
+      "model_name": "deepseek-chat",
       "temperature": 0.7,
       "top_p": null,
       "max_tokens": null,
@@ -296,22 +418,32 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
       "enable_identity": false,
       "identity_prompt": ""
     },
-    "model_b_reasoning": {
-      "api_url": "https://api.example.com/v1",
-      "api_key": "your-api-key",
-      "model_name": "deepseek-r1",
+    "Qwen3-32B-thinking": {
+      "api_url": "http://your-server:8815/v1",
+      "api_key": "EMPTY",
+      "model_name": "Qwen3-32B",
       "temperature": 0.7,
       "is_reasoning": true,
-      "enable_identity": true,
-      "identity_prompt": "You are a creative designer..."
+      "enable_identity": false,
+      "identity_prompt": ""
     }
   }
 }
 ```
 
-- 外层键名（如 `"model_a"`）即为 `config_key`，用于在日志中追溯模型配置
-- `model_name` 为实际调用的底层模型标识
-- Human Evaluation 模式下，系统从该池中自动随机抽取所需数量的模型配置
+### 配置字段说明
+
+| 字段 | 说明 |
+|------|------|
+| 外层键名 | 即 `config_key`（如 `"DeepSeek-V3.2"`），用于在日志和排名中追溯模型 |
+| `api_url` | OpenAI 兼容 API 的 base URL |
+| `api_key` | API 密钥（本地部署可设为 `"EMPTY"`） |
+| `model_name` | 实际调用的模型标识 |
+| `temperature` | 采样温度 |
+| `top_p` / `max_tokens` | 可选推理参数，设为 `null` 则使用模型默认值 |
+| `is_reasoning` | 是否为混合推理模型开启推理（如 Qwen3-32B），影响 API 调用方式 |
+| `enable_identity` | 是否启用自定义身份 Prompt |
+| `identity_prompt` | 自定义身份描述（仅 `enable_identity: true` 时生效） |
 
 ## 依赖
 
