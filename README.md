@@ -504,6 +504,49 @@ streamlit run app_eval_ui.py
 | `enable_identity` | 是否启用自定义身份 Prompt |
 | `identity_prompt` | 自定义身份描述（仅 `enable_identity: true` 时生效） |
 
+## Evaluation Metrics (发言质量与相关性评测指标)
+
+为了评估多智能体头脑风暴(Brainstorm)任务中 LLM 发言的多样性、信息量以及切题程度，我们引入了以下三个核心指标：
+
+* **Distinct-n (词汇多样性)**: 衡量局部词汇的丰富度。计算公式为单次发言中 unique n-grams 的数量与总 n-grams 数量的比值。值越高，说明发言越少出现"车轱辘话"重复现象。（默认计算 n=1, 2）。
+* **Entropy-n (信息熵)**: 基于香农熵评估发言的均匀分布程度与信息量。如果模型反复使用固定短语，概率分布集中，会导致该指标急剧下降。
+* **Sentence-BERT Similarity (主题相关性/防跑题)**: 衡量单次发言在深层语义上是否紧扣初始的主题 (Topic)。利用 Sentence-BERT (如 `all-MiniLM-L6-v2`) 提取发言与 Topic 的句向量，并计算两者的余弦相似度。得分越接近 1，说明越切题。
+
+## Metric Script Usage (指标计算脚本使用方式)
+
+在完成 Brainstorm 对话数据收集后，您可以运行后处理脚本自动为日志计算上述指标。该脚本假设发言内容为**英文**。
+
+### 环境依赖
+
+```bash
+pip install nltk sentence-transformers
+```
+
+### 运行脚本
+
+在代码中指定日志文件夹地址，或通过命令行运行：
+
+```bash
+python calculate_metrics.py --dir /path/to/your/json/logs/
+```
+
+*(注：如果不使用命令行参数，可直接在 `calculate_metrics.py` 中修改 `FOLDER_ADDRESS` 变量。如果要拓展计算 Distinct-3，可以在脚本顶部的 `N_GRAM_LIST` 变量中添加 `3`。)*
+
+### 可用参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--dir` | 日志文件夹路径 | 脚本内 `FOLDER_ADDRESS`（`log_human`） |
+| `--output` | 输出模式：`overwrite` 覆盖原文件，`copy` 输出到新文件夹 | `copy` |
+| `--model` | Sentence-BERT 模型名称 | `all-MiniLM-L6-v2` |
+
+### 结果格式
+
+脚本运行后，会在 JSON 文件中追加：
+
+1. `global_history` 下的每一条对话记录都会新增一个 `metric` 字段，记录单次发言得分。
+2. JSON 顶层会新增 `agent_metrics` 字段，记录该局游戏中各个 Agent (`config_key` / `position`) 在所有轮次中的各项指标**平均值**。
+
 ## 依赖
 
 - Python 3.9+
@@ -511,5 +554,7 @@ streamlit run app_eval_ui.py
 - `streamlit` >= 1.30.0 — Web 前端框架
 - `streamlit-autorefresh` >= 1.0.0 — 联机版客户端自动刷新
 - `filelock` >= 3.12.0 — 第三方标注系统的文件锁（防止并发写入冲突）
+- `nltk` >= 3.8.0 — 英文分词工具（指标计算脚本）
+- `sentence-transformers` >= 2.2.0 — Sentence-BERT 语义相似度（指标计算脚本）
 
 LLM 后端需提供 OpenAI 兼容的 Chat Completions API。
