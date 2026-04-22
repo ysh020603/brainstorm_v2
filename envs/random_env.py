@@ -36,8 +36,8 @@ class RandomEnv(EnvBase):
         lines = []
         for entry in others_entries:
             speaker = self.get_agent_display_name(entry["agent_id"])
-            lines.append(IP.ROUNDTABLE_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
+            lines.append(IP.SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
         body = "\n".join(lines)
         if turn_num == 1:
-            return IP.ROUNDTABLE_FIRST.format(body=body)
-        return IP.ROUNDTABLE_FOLLOW.format(body=body)
+            return IP.ROUND_FIRST.format(body=body)
+        return IP.ROUND_FOLLOW.format(body=body)

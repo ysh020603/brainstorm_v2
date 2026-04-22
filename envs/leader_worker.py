@@ -43,33 +43,15 @@ class LeaderWorker(EnvBase):
         return visible
 
     # ------------------------------------------------------------------
-    # Prompt 渲染（Leader / Worker 双视角）
+    # Prompt 渲染（统一模板）
     # ------------------------------------------------------------------
 
     def format_round_prompt(self, turn_num: int, others_entries: list[dict], agent_id: int) -> str:
-        if self._is_leader(agent_id):
-            names = []
-            lines = []
-            for entry in others_entries:
-                speaker = self.get_agent_display_name(entry["agent_id"])
-                names.append(speaker)
-                lines.append(IP.LEADER_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
-            names_str = "、".join(names)
-            body = "\n".join(lines)
-            if turn_num == 1:
-                return IP.LEADER_ROUND_FIRST.format(names=names_str, body=body)
-            return IP.LEADER_ROUND_FOLLOW.format(names=names_str, body=body)
-        else:
-            lines = []
-            for entry in others_entries:
-                speaker = self.get_agent_display_name(entry["agent_id"])
-                lines.append(IP.WORKER_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
-            body = "\n".join(lines)
-            if turn_num == 1:
-                return IP.WORKER_ROUND_FIRST.format(body=body)
-            return IP.WORKER_ROUND_FOLLOW.format(body=body)
-
-    def format_initial_prompt(self, agent_id: int) -> str:
-        if self._is_leader(agent_id):
-            return IP.LEADER_INITIAL
-        return IP.WORKER_INITIAL
+        lines = []
+        for entry in others_entries:
+            speaker = self.get_agent_display_name(entry["agent_id"])
+            lines.append(IP.SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
+        body = "\n".join(lines)
+        if turn_num == 1:
+            return IP.ROUND_FIRST.format(body=body)
+        return IP.ROUND_FOLLOW.format(body=body)

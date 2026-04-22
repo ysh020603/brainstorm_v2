@@ -15,13 +15,14 @@
 - **可见性隔离**，不同模式下 Agent 看到的信息严格按规则过滤
 - **全自动盲抽**，Human Evaluation 模式下 LLM Agent 从配置池中随机抽取，确保实验公正
 
-### 三种实验形态
+### 四种实验 / 评估形态
 
 | 实验形态 | 入口 | 目的 | 人类数量 |
 |----------|------|------|----------|
 | **纯 LLM 实验** | `run_batch.sh` / `main_batch.py` | 测试不同 LLM 在头脑风暴中的表现 | 0 |
 | **Single Human 实验** | `app.py` | 1 个人类与多个不同 LLM 讨论，收集人类对各 LLM 的偏好排名 | 1 |
 | **Multiplayer 实验** | `app_multiplayer.py` | 多个人类与多个 LLM 共同讨论，直观衡量 Human 与 LLM 的能力差距 | 2–4 |
+| **第三方标注评估** | `app_eval_ui.py` | 对已有实验日志进行脱敏展示和人工排序标注（离线评估） | — |
 
 ## 讨论模式
 
@@ -68,6 +69,7 @@ brainstorm_v2/
 │   └── llm_config.json         # LLM 模型池配置（API 地址、密钥、推理参数）
 ├── app.py                      # Single Human 实验前端（1 人类 + N 个 LLM）
 ├── app_multiplayer.py          # Multiplayer 实验前端（多人类 + N 个 LLM）
+├── app_eval_ui.py              # 第三方标注评估系统（脱敏展示 + 人工排序）
 ├── room_manager.py             # 联机房间全局状态管理器
 ├── main_batch.py               # 纯 LLM 批量实验入口
 ├── run_batch.sh                # 纯 LLM 批量实验脚本
@@ -75,7 +77,8 @@ brainstorm_v2/
 ├── requirements.txt            # Python 依赖
 ├── log/                        # 纯 LLM 实验日志
 ├── log_human/                  # Single Human 实验日志
-└── log_human_2/                # Multiplayer 实验日志
+├── log_human_2/                # Multiplayer 实验日志
+└── user_log/                   # 第三方标注人员的历史记录
 ```
 
 ## 架构设计
@@ -317,6 +320,62 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
    - `final_rankings` 为字典形式，键为提交排名的人类 `agent_id`，值为该人类给出的排名数组
    - 通过交叉对比多位人类的排名结果和 `config_key` 标识，可分析人类与 LLM 之间的能力差距
 
+### 第三方标注评估
+
+**目的**：由未参与实验的第三方标注人员，对已有实验日志进行脱敏阅读和质量排序，获取独立的人工评价数据。
+
+```bash
+streamlit run app_eval_ui.py
+```
+
+**工作流程**：
+
+1. **用户登录**：
+   - 启动后进入登录界面，输入标注人员姓名（如 `Senhao`）并确认
+   - 系统在 `user_log/` 目录下加载或创建该用户的历史标注记录（`<user_name>_history.json`）
+
+2. **待标注文件过滤**：
+   - 系统遍历后台配置的多个日志目录（默认为 `log/`、`log_human/`、`log_human_2/`），收集所有 JSON 文件
+   - 自动剔除当前用户已标注过的文件，在侧边栏下拉列表中仅展示未标注文件
+   - 可在 `app_eval_ui.py` 顶部的 `TARGET_LOG_DIRS` 列表中配置需要扫描的日志目录
+
+3. **脱敏展示（Anonymization）**：
+   - 选中待标注文件后，系统读取 JSON 内容并提取参与者列表
+   - 动态生成随机映射表：将原始 Agent 编号（如 Agent 1–4）随机重映射为新的编号，确保标注人员无法通过位置推断模型身份
+   - 使用确定性种子（文件路径 + 用户名），保证同一用户对同一文件的映射始终一致
+   - 展示讨论记录时，所有发言者名称和消息正文中出现的 Agent 引用均按映射表替换
+
+4. **排序标注**：
+   - 讨论记录下方提供排序表单，为每个 Agent 分配名次（1 = 最佳）
+   - 提交时执行**严格全序校验**——排名值必须恰好构成 `{1, 2, ..., N}` 且无重复
+
+5. **结果持久化**：
+   - 标注结果写入原 JSON 文件的 `3port` 字段（结构为 `{用户名: [{position, config_key, rank}, ...]}`）
+   - 写入时使用文件锁（`filelock`）防止多人同时标注时数据覆盖
+   - 同时将已标注文件路径追加到用户的历史记录中
+   - 提交后自动刷新页面，已标注文件从待标注列表中消失
+
+**`3port` 字段格式**：
+
+```json
+{
+  "3port": {
+    "Senhao": [
+      {"position": 4, "config_key": "Qwen3-32B-nothinking", "rank": 1},
+      {"position": 1, "config_key": "qwen2.5_14B", "rank": 2},
+      {"position": 3, "config_key": "Qwen3-32B-thinking", "rank": 3},
+      {"position": 2, "config_key": "human", "rank": 4}
+    ],
+    "Alice": [
+      {"position": 3, "config_key": "Qwen3-32B-thinking", "rank": 1},
+      {"position": 4, "config_key": "Qwen3-32B-nothinking", "rank": 2},
+      {"position": 1, "config_key": "qwen2.5_14B", "rank": 3},
+      {"position": 2, "config_key": "human", "rank": 4}
+    ]
+  }
+}
+```
+
 ## 日志格式
 
 所有日志为 JSON 文件，结构统一：
@@ -451,5 +510,6 @@ streamlit run app_multiplayer.py --server.address 0.0.0.0
 - `openai` >= 1.0.0 — LLM API 调用
 - `streamlit` >= 1.30.0 — Web 前端框架
 - `streamlit-autorefresh` >= 1.0.0 — 联机版客户端自动刷新
+- `filelock` >= 3.12.0 — 第三方标注系统的文件锁（防止并发写入冲突）
 
 LLM 后端需提供 OpenAI 兼容的 Chat Completions API。

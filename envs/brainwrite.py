@@ -85,9 +85,8 @@ class BrainWrite(EnvBase):
         lines = []
         for entry in others_entries:
             speaker = self.get_agent_display_name(entry["agent_id"])
-            lines.append(IP.BRAINWRITE_SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
+            lines.append(IP.SPEAKER_LINE.format(speaker=speaker, content=entry["content"]))
         body = "\n".join(lines)
-        return IP.BRAINWRITE_ROUND.format(turn_num=turn_num, body=body)
-
-    def format_initial_prompt(self, agent_id: int) -> str:
-        return IP.BRAINWRITE_INITIAL
+        if turn_num == 1:
+            return IP.ROUND_FIRST.format(body=body)
+        return IP.ROUND_FOLLOW.format(body=body)

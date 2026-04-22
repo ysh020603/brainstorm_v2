@@ -49,7 +49,6 @@ class EnvBase:
         """初始化讨论：为每个 Agent 设置 system prompt，准备第一轮发言顺序。"""
         for agent in self.agents:
             agent.system_prompt = build_system_prompt(
-                mode=self.mode,
                 total_agents=len(self.agents),
                 topic=self.topic,
                 role_background=agent.role_background,
