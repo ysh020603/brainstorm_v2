@@ -4,8 +4,8 @@ _TEMPLATE_WITH_ROLE = (
     "Discussion topic: {topic}\n\n"
     "Your role background: {role_background}\n\n"
     "Based on your professional background, participate in the brainstorming and share your thoughts.\n"
-    "- Carefully read the content in the brainstorming before making your statement.\n"
-    "- Your contributions should be insightful and propose specific views or solutions.\n"
+    "- Before making your statement, please carefully read the statements of other participants.\n"
+    "- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n"
     "- Only produce rigorous statements; do not generate other content or introduce yourself.\n"
     "- Keep your statements concise and to the point."
 )
@@ -14,8 +14,8 @@ _TEMPLATE_NO_ROLE = (
     "You are participating in a brainstorming discussion.\n"
     "Number of participants: {total_agents}\n"
     "Discussion topic: {topic}\n\n"
-    "- Carefully read the content in the brainstorming before making your statement.\n"
-    "- Your contributions should be insightful and propose specific views or solutions.\n"
+    "- Before making your statement, please carefully read the statements of other participants.\n"
+    "- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n"
     "- Only produce rigorous statements; do not generate other content or introduce yourself.\n"
     "- Keep your statements concise and to the point."
 )

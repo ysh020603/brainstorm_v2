@@ -5,6 +5,7 @@ Brainstorm 对话日志指标计算脚本
   - Distinct-n (n-gram 多样性)
   - Entropy-n  (n-gram 信息熵)
   - Sentence-BERT Similarity (与 Topic 的语义相关性)
+  - Max BLEU (与可见上下文中历史发言的最高 BLEU 相似度)
 
 计算结果注入到原 JSON 结构中（turn-level + agent-level 聚合）。
 """
@@ -17,11 +18,12 @@ import os
 import re
 from collections import Counter, defaultdict
 
+from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from sentence_transformers import SentenceTransformer, util
 
 # ======================== 可配置参数 ========================
 
-FOLDER_ADDRESS = "log_human"
+FOLDER_ADDRESS = "log"
 N_GRAM_LIST = [1, 2]
 SBERT_MODEL_NAME = "all-MiniLM-L6-v2"
 OUTPUT_MODE = "overwrite"  # "overwrite" | "copy"
@@ -83,6 +85,80 @@ def compute_turn_metrics(
     metric["sbert_sim_to_topic"] = round(sim, 4)
 
     return metric
+
+
+_SPEAKER_LINE_RE = re.compile(r"- Agent \d+ (?:say|的草稿)[：:]\s*")
+_TRAILING_INSTR_RE = re.compile(
+    r"\n(?:Please respond based on|Be concise|请根据|请仔细阅读|请在此基础上).*$",
+    re.DOTALL,
+)
+
+
+def _extract_utterances_from_user_content(content: str) -> list[str]:
+    """从 user-role 消息中提取其他 Agent 的发言文本。"""
+    markers = list(_SPEAKER_LINE_RE.finditer(content))
+    if not markers:
+        return []
+    utterances = []
+    for i, m in enumerate(markers):
+        start = m.end()
+        end = markers[i + 1].start() if i + 1 < len(markers) else len(content)
+        utterance = content[start:end].strip()
+        if utterance:
+            utterances.append(utterance)
+    if utterances:
+        utterances[-1] = _TRAILING_INSTR_RE.sub("", utterances[-1]).strip()
+    return [u for u in utterances if u]
+
+
+def compute_max_bleu_scores(final_messages: dict) -> dict[int, list[float]]:
+    """
+    从 final_messages 重构每个 Agent 的可见上下文历史，
+    计算每次发言与所有可见历史的 Max BLEU。
+
+    Returns: {agent_id: [score_round_1, score_round_2, ...]}
+    """
+    smoother = SmoothingFunction().method1
+    result: dict[int, list[float]] = {}
+
+    for agent_id_str, messages in final_messages.items():
+        agent_id = int(agent_id_str)
+        observed_history: list[str] = []
+        max_bleu_scores: list[float] = []
+
+        for msg in messages:
+            role = msg["role"]
+            content = msg.get("content", "")
+
+            if role == "user":
+                utterances = _extract_utterances_from_user_content(content)
+                observed_history.extend(utterances)
+
+            elif role == "assistant":
+                if not observed_history:
+                    max_bleu_scores.append(0.0)
+                else:
+                    hypothesis = tokenize(content)
+                    if not hypothesis:
+                        max_bleu_scores.append(0.0)
+                    else:
+                        best = 0.0
+                        for hist in observed_history:
+                            reference = tokenize(hist)
+                            if not reference:
+                                continue
+                            score = sentence_bleu(
+                                [reference],
+                                hypothesis,
+                                smoothing_function=smoother,
+                            )
+                            best = max(best, score)
+                        max_bleu_scores.append(round(best, 4))
+                observed_history.append(content)
+
+        result[agent_id] = max_bleu_scores
+
+    return result
 
 
 def compute_agent_metrics(
@@ -148,11 +224,23 @@ def process_single_file(
 
     topic_embedding = sbert_model.encode(topic, convert_to_tensor=True)
 
+    bleu_scores_map: dict[int, list[float]] = {}
+    if "final_messages" in data:
+        bleu_scores_map = compute_max_bleu_scores(data["final_messages"])
+
+    turn_index_tracker: dict[int, int] = defaultdict(int)
+
     for turn in data["global_history"]:
         content = turn.get("content", "")
         turn["metric"] = compute_turn_metrics(
             content, topic_embedding, sbert_model, n_gram_list
         )
+
+        aid = turn["agent_id"]
+        idx = turn_index_tracker[aid]
+        scores = bleu_scores_map.get(aid, [])
+        turn["metric"]["max_bleu"] = scores[idx] if idx < len(scores) else 0.0
+        turn_index_tracker[aid] += 1
 
     agents_info = data.get("metadata", {}).get("agents", [])
     data["agent_metrics"] = compute_agent_metrics(

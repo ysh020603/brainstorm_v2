@@ -12,8 +12,8 @@ cd "$SCRIPT_DIR"
 
 # ===== 配置区域 =====
 CONFIG="config/llm_config.json"
-MODELS="qwen3_8b_local,qwen3_8b_local,qwen3_8b_local,qwen3_8b_local"
-TOPIC="人工智能技术能怎样帮助解决三体问题？"
+MODELS="qwen2.5_14B,qwen2.5_14B,Qwen3-32B-nothinking,Qwen3-32B-thinking"
+TOPIC="Features for a next-generation smartphone."
 
 # ===== 批量运行 =====
 for MODE in brainwrite round_robin random; do

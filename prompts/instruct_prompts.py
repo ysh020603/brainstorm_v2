@@ -12,9 +12,9 @@ Template variable descriptions:
 # Unified templates
 # ══════════════════════════════════════════════
 
-INITIAL_PROMPT = "Please speak first and share your views and thoughts on the discussion topic. Be concise."
+INITIAL_PROMPT = "Please speak first and share your views and thoughts on the discussion topic. Be concise. Please in English."
 
-ROUND_FIRST = "Here is the newly received information:\n{body}\nPlease respond based on the above new information. Be concise."
-ROUND_FOLLOW = "Here is the newly received information:\n{body}\nPlease respond based on the above new information. Be concise."
+ROUND_FIRST = "Here is the newly received information:\n{body}\nPlease respond based on the above new information. Be concise. Please in English."
+ROUND_FOLLOW = "Here is the newly received information:\n{body}\nPlease respond based on the above new information. Be concise. Please in English."
 
 SPEAKER_LINE = "- {speaker} say: {content}"
