@@ -1,3 +1,5 @@
+from tools.call_openai import MAX_REPLY_WORDS
+
 _TEMPLATE_WITH_ROLE = (
     "You are participating in a brainstorming discussion.\n"
     "Number of participants: {total_agents}\n"
@@ -7,7 +9,7 @@ _TEMPLATE_WITH_ROLE = (
     "- Before making your statement, please carefully read the statements of other participants.\n"
     "- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n"
     "- Only produce rigorous statements; do not generate other content or introduce yourself.\n"
-    "- Keep your statements concise and to the point."
+    "- Keep your statements concise, to the point, and strictly within {max_reply_words} words."
 )
 
 _TEMPLATE_NO_ROLE = (
@@ -17,7 +19,7 @@ _TEMPLATE_NO_ROLE = (
     "- Before making your statement, please carefully read the statements of other participants.\n"
     "- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n"
     "- Only produce rigorous statements; do not generate other content or introduce yourself.\n"
-    "- Keep your statements concise and to the point."
+    "- Keep your statements concise, to the point, and strictly within {max_reply_words} words."
 )
 
 
@@ -32,11 +34,13 @@ def build_system_prompt(
             total_agents=total_agents,
             topic=topic,
             role_background=role_background,
+            max_reply_words=MAX_REPLY_WORDS,
         )
     else:
         base = _TEMPLATE_NO_ROLE.format(
             total_agents=total_agents,
             topic=topic,
+            max_reply_words=MAX_REPLY_WORDS,
         )
 
     if identity_prompt:

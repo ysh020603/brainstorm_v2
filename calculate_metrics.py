@@ -31,6 +31,14 @@ OUTPUT_MODE = "overwrite"  # "overwrite" | "copy"
 # ===========================================================
 
 
+_CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _contains_chinese(text: str) -> bool:
+    """检测文本中是否包含中文字符。"""
+    return bool(_CHINESE_CHAR_RE.search(text))
+
+
 def tokenize(text: str) -> list[str]:
     """英文分词：提取单词并转小写，去除标点。"""
     return re.findall(r"\b\w+\b", text.lower())
@@ -72,13 +80,20 @@ def compute_turn_metrics(
     n_gram_list: list[int],
 ) -> dict:
     """计算单条发言的全部指标，返回 metric 字典。"""
-    tokens = tokenize(content)
     metric = {}
+    is_chinese = _contains_chinese(content)
 
-    for n in n_gram_list:
-        metric[f"distinct_{n}"] = round(calc_distinct_n(tokens, n), 4)
-    for n in n_gram_list:
-        metric[f"entropy_{n}"] = round(calc_entropy_n(tokens, n), 4)
+    if is_chinese:
+        for n in n_gram_list:
+            metric[f"distinct_{n}"] = None
+        for n in n_gram_list:
+            metric[f"entropy_{n}"] = None
+    else:
+        tokens = tokenize(content)
+        for n in n_gram_list:
+            metric[f"distinct_{n}"] = round(calc_distinct_n(tokens, n), 4)
+        for n in n_gram_list:
+            metric[f"entropy_{n}"] = round(calc_entropy_n(tokens, n), 4)
 
     content_embedding = sbert_model.encode(content, convert_to_tensor=True)
     sim = util.cos_sim(content_embedding, topic_embedding).item()
@@ -135,7 +150,9 @@ def compute_max_bleu_scores(final_messages: dict) -> dict[int, list[float]]:
                 observed_history.extend(utterances)
 
             elif role == "assistant":
-                if not observed_history:
+                if _contains_chinese(content):
+                    max_bleu_scores.append(None)
+                elif not observed_history:
                     max_bleu_scores.append(0.0)
                 else:
                     hypothesis = tokenize(content)
@@ -192,9 +209,12 @@ def compute_agent_metrics(
         all_keys = metrics_list[0].keys()
         avg_metrics = {}
         for key in all_keys:
-            values = [m[key] for m in metrics_list]
+            valid_values = [m[key] for m in metrics_list if m[key] is not None]
             avg_key = f"avg_{key}" if not key.startswith("avg_") else key
-            avg_metrics[avg_key] = round(sum(values) / len(values), 4)
+            if valid_values:
+                avg_metrics[avg_key] = round(sum(valid_values) / len(valid_values), 4)
+            else:
+                avg_metrics[avg_key] = None
 
         info = agent_id_to_info.get(agent_id, {})
         result.append(

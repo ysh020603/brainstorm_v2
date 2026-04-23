@@ -2,6 +2,8 @@ import re
 
 from openai import OpenAI
 
+MAX_REPLY_WORDS: int = 500
+
 _THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
@@ -9,6 +11,14 @@ def _clean_think_tags(text: str) -> str:
     """剔除 <think>...</think> 块并清理首尾空白。"""
     cleaned = _THINK_PATTERN.sub("", text)
     return cleaned.strip()
+
+
+def _truncate_by_words(text: str, max_words: int = MAX_REPLY_WORDS) -> str:
+    """按空白符分词，超过 max_words 则截断并追加标记。"""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]) + " [Truncated]"
 
 
 def call_openai(
@@ -43,4 +53,5 @@ def call_openai(
         **call_kwargs,
     )
     raw_content = completion.choices[0].message.content
-    return _clean_think_tags(raw_content)
+    cleaned = _clean_think_tags(raw_content)
+    return _truncate_by_words(cleaned)
