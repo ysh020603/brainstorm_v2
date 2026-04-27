@@ -66,7 +66,8 @@ brainstorm_v2/
 │   ├── config_loader.py        # LLM 配置加载与 Agent 工厂
 │   └── call_openai.py          # OpenAI 兼容 API 调用封装
 ├── config/
-│   └── llm_config.json         # LLM 模型池配置（API 地址、密钥、推理参数）
+│   ├── llm_config.json         # LLM 模型池配置（API 地址、密钥、推理参数）
+│   └── cpss_eval_config.json   # CPSS 评估配置（API、并发、目标日志目录等）
 ├── app.py                      # Single Human 实验前端（1 人类 + N 个 LLM）
 ├── app_multiplayer.py          # Multiplayer 实验前端（多人类 + N 个 LLM）
 ├── app_eval_ui.py              # 第三方标注评估系统（脱敏展示 + 人工排序）
@@ -74,6 +75,7 @@ brainstorm_v2/
 ├── main_batch.py               # 纯 LLM 批量实验入口
 ├── run_batch.sh                # 纯 LLM 批量实验脚本
 ├── api_test.py                 # LLM API 连通性检测工具
+├── cpss_evaluator.py           # CPSS（Creative Product Semantic Scale）55 维自动化评估脚本
 ├── requirements.txt            # Python 依赖
 ├── log/                        # 纯 LLM 实验日志
 ├── log_human/                  # Single Human 实验日志
@@ -547,6 +549,29 @@ python calculate_metrics.py --dir /path/to/your/json/logs/
 
 1. `global_history` 下的每一条对话记录都会新增一个 `metric` 字段，记录单次发言得分。
 2. JSON 顶层会新增 `agent_metrics` 字段，记录该局游戏中各个 Agent (`config_key` / `position`) 在所有轮次中的各项指标**平均值**。
+
+## CPSS Evaluator（创意产品语义量表 55 维评估）
+
+`cpss_evaluator.py` 用于对一场讨论日志中的创意产出进行 **CPSS（Creative Product Semantic Scale）55 维**打分。它会从日志的 `global_history` 中按 `agent_name` 聚合每位 Agent 的发言文本，然后对每个 Agent 的“创意内容”独立评估 55 个语义量表维度（1–7 分，4 为中性），并把结果写回到原 JSON 文件中。
+
+### 配置文件
+
+评估脚本读取 `config/cpss_eval_config.json`，常用字段：
+
+- `api_url` / `api_key` / `model_name`：OpenAI 兼容 Chat Completions API 的访问配置
+- `concurrency`：并发数（用 `asyncio.Semaphore` 限流）
+- `max_retries`：单题失败的重试次数
+- `target_dirs`：待评估日志目录列表（脚本会扫描其中的 `*.json`）
+
+### 运行方式
+
+```bash
+python cpss_evaluator.py
+```
+
+运行后脚本会遍历 `target_dirs` 下的日志文件，并在每个日志 JSON 顶层新增/覆盖字段：
+
+- `cpss_evaluation_per_agent`：以 `agent_name` 为键的字典，每个 Agent 对应 55 个维度的评分键值对；若某题多次失败则该题为 `null`
 
 ## 依赖
 

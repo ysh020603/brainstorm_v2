@@ -40,8 +40,18 @@ def call_openai(
     is_reasoning = call_kwargs.pop("is_reasoning", False)
 
     if not is_reasoning:
-        model_name = call_kwargs.get("model", "")
-        if "glm" in model_name.lower():
+        model_name = str(call_kwargs.get("model", ""))
+        model_name_l = model_name.lower()
+        if "kimi" in model_name_l:
+            # Kimi Instant Mode 通常要求 temperature=0.6
+            call_kwargs["temperature"] = 0.6
+            # Kimi 官方 API：用 thinking.type=disabled 关闭 reasoning_content；
+            # 同时兼容 vLLM/SGLang 模板变量 thinking=false。
+            call_kwargs["extra_body"] = {
+                "thinking": {"type": "disabled"},
+                "chat_template_kwargs": {"thinking": False},
+            }
+        elif "glm" in model_name_l or "deepseek" in model_name_l:
             call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         else:
             call_kwargs["extra_body"] = {

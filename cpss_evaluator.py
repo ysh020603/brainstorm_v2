@@ -2,8 +2,8 @@
 CPSS (Creative Product Semantic Scale) 自动化评估脚本
 
 利用 LLM 对头脑风暴日志中的创意产品进行 55 维语义量表打分。
-每个维度独立发起一次 LLM 请求，通过异步并发 + Semaphore 限流完成评估，
-结果以 "cpss_evaluation" 键回写至原 JSON 文件。
+对每个 Agent 的创意内容分别独立打分，通过异步并发 + Semaphore 限流完成评估，
+结果以 "cpss_evaluation_per_agent" 键回写至原 JSON 文件。
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from openai import AsyncOpenAI
 
 # ═══════════════════════════════════════════════════════════════════
 # CPSS 55-item 词库（已按标准量表修正第 22/37/45 题）
-# 每项: (题号, 左侧词=1分端, 右侧词=7分端, 回写key)
 # ═══════════════════════════════════════════════════════════════════
 
 CPSS_ITEMS: list[dict[str, Any]] = [
@@ -81,7 +80,7 @@ CPSS_ITEMS: list[dict[str, Any]] = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════
-# Prompt 模板
+# Prompt 模板与正则
 # ═══════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = (
@@ -117,6 +116,14 @@ USER_PROMPT_TEMPLATE = (
     "Output strictly a single integer:"
 )
 
+_THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
+_DIGIT_RE = re.compile(r"[1-7]")
+
+def _clean_think_tags(text: str) -> str:
+    """剔除 <think>...</think> 块，防止从思考过程中抓去到了错误的评分数字"""
+    cleaned = _THINK_PATTERN.sub("", text)
+    return cleaned.strip()
+
 # ═══════════════════════════════════════════════════════════════════
 # 配置文件路径与常量
 # ═══════════════════════════════════════════════════════════════════
@@ -127,18 +134,12 @@ _CPSS_CONFIG_PATH = os.path.join(
     "cpss_eval_config.json",
 )
 
-_DIGIT_RE = re.compile(r"[1-7]")
-
-
 def load_cpss_config(config_path: str | None = None) -> dict:
-    """加载 CPSS 评估专用配置文件，返回完整配置字典。"""
     path = config_path or _CPSS_CONFIG_PATH
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def build_api_and_inference_config(cfg: dict) -> tuple[dict, dict]:
-    """从 cpss_eval_config 构建 AsyncOpenAI 客户端参数和推理参数。"""
     api_config = {
         "api_key": cfg["api_key"],
         "base_url": cfg["api_url"],
@@ -156,7 +157,6 @@ def build_api_and_inference_config(cfg: dict) -> tuple[dict, dict]:
 
     return api_config, inference_config
 
-
 # ═══════════════════════════════════════════════════════════════════
 # 核心：异步单题评估
 # ═══════════════════════════════════════════════════════════════════
@@ -170,11 +170,7 @@ async def evaluate_single_question(
     semaphore: asyncio.Semaphore,
     max_retries: int = 3,
 ) -> tuple[str, int | None]:
-    """对单个 CPSS 维度发起 LLM 评估请求。
-
-    Returns:
-        (item_key, score)  score 为 1-7 的整数，失败则为 None。
-    """
+    
     user_prompt = USER_PROMPT_TEMPLATE.format(
         topic=topic,
         idea_content=idea_content,
@@ -188,6 +184,7 @@ async def evaluate_single_question(
 
     call_kwargs = dict(inference_config)
     is_reasoning = call_kwargs.pop("is_reasoning", False)
+    
     if not is_reasoning:
         model_name = call_kwargs.get("model", "")
         if "glm" in model_name.lower():
@@ -205,36 +202,101 @@ async def evaluate_single_question(
                     **call_kwargs,
                 )
             raw = completion.choices[0].message.content.strip()
-            match = _DIGIT_RE.search(raw)
+            # 必须先清理 think 标签，再做正则提取，避免抓出推理过程中的中间数字
+            cleaned = _clean_think_tags(raw)
+            match = _DIGIT_RE.search(cleaned)
+            
             if match:
                 return item["key"], int(match.group())
-            print(
-                f"    [WARN] Q{item['id']} attempt {attempt}: "
-                f"unexpected response '{raw}'"
-            )
+            
+            print(f"    [WARN] Q{item['id']} attempt {attempt}: unexpected response '{cleaned}' (raw: {raw})")
+            
         except Exception as e:
-            print(
-                f"    [ERR]  Q{item['id']} attempt {attempt}: {e}"
-            )
+            err_msg = str(e).lower()
+            # 容错：有些 API 节点不支持 extra_body 会抛出 400 错误，捕获并下一次重试剥离它
+            if "extra_body" in err_msg or "unrecognized" in err_msg or "400" in err_msg:
+                if "extra_body" in call_kwargs:
+                    call_kwargs.pop("extra_body")
+                    print(f"    [WARN] API rejected extra_body, retrying without it...")
+                    
+            print(f"    [ERR]  Q{item['id']} attempt {attempt}: {e}")
 
     print(f"    [FAIL] Q{item['id']} exhausted {max_retries} retries")
     return item["key"], None
 
-
 # ═══════════════════════════════════════════════════════════════════
-# 组合全部 Agent 发言为 idea_content
+# 分离提取每个 Agent 的发言
 # ═══════════════════════════════════════════════════════════════════
 
-def extract_idea_content(data: dict) -> str:
-    """将 global_history 中所有发言拼接为完整的创意描述文本。"""
-    parts: list[str] = []
+def extract_agent_ideas(data: dict) -> dict[str, dict[str, Any]]:
+    """
+    将 global_history 中每个 Agent 的发言提取为独立文本，并携带必要的身份字段：
+    agent_id / position / config_key。
+
+    说明：
+    - 日志里 `position_map` 可能存在多个相同 `config_key`（同模型多席位），因此 position
+      不能用 config_key 反查；这里直接使用 `agent_id` 作为 position（与现有日志统计字段保持一致）。
+    """
+    agent_ideas: dict[str, list[str]] = {}
+    agent_meta: dict[str, dict[str, Any]] = {}
+
+    # 先从 metadata.agents 建一个 agent_id -> config_key 的映射（更稳）
+    agent_id_to_config: dict[int, str] = {}
+    for a in data.get("metadata", {}).get("agents", []) or []:
+        try:
+            aid = int(a.get("agent_id"))
+        except Exception:
+            continue
+        ck = a.get("config_key")
+        if isinstance(ck, str) and ck:
+            agent_id_to_config[aid] = ck
+
     for turn in data.get("global_history", []):
         content = turn.get("content", "").strip()
-        if content:
-            agent_name = turn.get("agent_name", f"Agent {turn.get('agent_id', '?')}")
-            parts.append(f"[{agent_name}]: {content}")
-    return "\n\n".join(parts)
+        if not content:
+            continue
 
+        # 过滤非必要角色，如系统裁判等
+        role = turn.get("role", "")
+        if role in ["system", "moderator"]:
+            continue
+
+        agent_id = turn.get("agent_id", None)
+        try:
+            agent_id_int: int | None = int(agent_id) if agent_id is not None else None
+        except Exception:
+            agent_id_int = None
+
+        agent_name = turn.get("agent_name", None)
+        if not agent_name:
+            agent_name = f"Agent {agent_id_int if agent_id_int is not None else '?'}"
+
+        if agent_name not in agent_ideas:
+            agent_ideas[agent_name] = []
+        agent_ideas[agent_name].append(content)
+
+        # 记录一次 meta（以 first-seen 为准）
+        if agent_name not in agent_meta:
+            config_key = turn.get("config_key")
+            if (not isinstance(config_key, str) or not config_key) and agent_id_int is not None:
+                config_key = agent_id_to_config.get(agent_id_int, None)
+
+            agent_meta[agent_name] = {
+                "agent_id": agent_id_int,
+                "position": agent_id_int,  # position 与 agent_id 对齐（日志里常用这种口径）
+                "config_key": config_key,
+            }
+
+    out: dict[str, dict[str, Any]] = {}
+    for name, texts in agent_ideas.items():
+        meta = agent_meta.get(name, {})
+        out[name] = {
+            "idea_content": "\n\n".join(texts),
+            "agent_id": meta.get("agent_id"),
+            "position": meta.get("position"),
+            "config_key": meta.get("config_key"),
+        }
+    return out
 
 # ═══════════════════════════════════════════════════════════════════
 # 单文件评估流程
@@ -247,11 +309,7 @@ async def evaluate_file(
     semaphore: asyncio.Semaphore,
     max_retries: int = 3,
 ) -> bool:
-    """对单个 JSON 日志文件执行 55 维 CPSS 评估并回写。
-
-    Returns:
-        True 表示成功，False 表示有题目评估失败。
-    """
+    
     with open(filepath, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -259,40 +317,64 @@ async def evaluate_file(
     if not topic:
         print(f"  [WARN] No topic in {filepath}, using empty string.")
 
-    idea_content = extract_idea_content(data)
-    if not idea_content:
-        print(f"  [SKIP] No content in {filepath}")
+    # 这里改为获取所有 Agent 的独立想法集合
+    agent_ideas_dict = extract_agent_ideas(data)
+    if not agent_ideas_dict:
+        print(f"  [SKIP] No agent content in {filepath}")
         return False
 
-    tasks = [
-        evaluate_single_question(
-            client=client,
-            inference_config=inference_config,
-            item=item,
-            topic=topic,
-            idea_content=idea_content,
-            semaphore=semaphore,
-            max_retries=max_retries,
-        )
-        for item in CPSS_ITEMS
-    ]
+    # 创建新的根字典字段
+    data["cpss_evaluation_per_agent"] = {}
+    file_all_ok = True
 
-    results = await asyncio.gather(*tasks)
+    # 针对每个 Agent 发起 55 个维度的评测
+    for agent_name, payload in agent_ideas_dict.items():
+        idea_content = payload.get("idea_content", "")
+        agent_id = payload.get("agent_id")
+        position = payload.get("position")
+        config_key = payload.get("config_key")
 
-    cpss_evaluation: dict[str, int | None] = {}
-    all_ok = True
-    for key, score in results:
-        cpss_evaluation[key] = score
-        if score is None:
-            all_ok = False
+        print(f"    Evaluating Agent: {agent_name} ...")
+        tasks = [
+            evaluate_single_question(
+                client=client,
+                inference_config=inference_config,
+                item=item,
+                topic=topic,
+                idea_content=idea_content,
+                semaphore=semaphore,
+                max_retries=max_retries,
+            )
+            for item in CPSS_ITEMS
+        ]
 
-    data["cpss_evaluation"] = cpss_evaluation
+        results = await asyncio.gather(*tasks)
+
+        cpss_evaluation: dict[str, int | None] = {}
+        agent_all_ok = True
+        
+        for key, score in results:
+            cpss_evaluation[key] = score
+            if score is None:
+                agent_all_ok = False
+                file_all_ok = False
+                
+        # 保存特定 Agent 的分数
+        data["cpss_evaluation_per_agent"][agent_name] = {
+            "agent_id": agent_id,
+            "position": position,
+            "config_key": config_key,
+            "scores": cpss_evaluation,
+        }
+        if agent_all_ok:
+            print(f"      => {agent_name} OK (55/55)")
+        else:
+            print(f"      => {agent_name} PARTIAL (some scores are null)")
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    return all_ok
-
+    return file_all_ok
 
 # ═══════════════════════════════════════════════════════════════════
 # 主入口
@@ -345,21 +427,17 @@ async def async_main() -> None:
                 max_retries=max_retries,
             )
             if ok:
-                print(f"  => OK (55/55 scores written)")
                 success_count += 1
             else:
-                print(f"  => PARTIAL (some scores are null)")
                 fail_count += 1
         except Exception as e:
             print(f"  => FAILED ({e})")
             fail_count += 1
 
-    print(f"\nDone. Success: {success_count}, Issues: {fail_count}")
-
+    print(f"\nDone. Success files: {success_count}, Files with issues: {fail_count}")
 
 def main() -> None:
     asyncio.run(async_main())
-
 
 if __name__ == "__main__":
     main()

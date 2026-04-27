@@ -48,7 +48,14 @@ def _build_call_kwargs(cfg: dict, *, is_reasoning: bool) -> dict:
 
     if not is_reasoning:
         model_name = str(call_kwargs.get("model", ""))
-        if "glm" in model_name.lower():
+        model_name_l = model_name.lower()
+        if "kimi" in model_name_l:
+            call_kwargs["temperature"] = 0.6
+            call_kwargs["extra_body"] = {
+                "thinking": {"type": "disabled"},
+                "chat_template_kwargs": {"thinking": False},
+            }
+        elif "glm" in model_name_l or "deepseek" in model_name_l:
             call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         else:
             call_kwargs["extra_body"] = {
@@ -211,27 +218,27 @@ def main() -> int:
         cfg = pool[key]
         base_is_reasoning = bool(cfg.get("is_reasoning", False))
 
-        ok, _ = _run_once(
+        ok, info = _run_once(
             cfg,
             is_reasoning=base_is_reasoning,
             dump_json=dump_json,
             max_chars=max_chars,
         )
         if not ok:
-            print(f"[FAIL] {key}")
+            print(f"[FAIL] {key}: {info}")
             failed += 1
             continue
         print(f"[OK]   {key} (primary run)")
 
         if args.toggle_reasoning:
-            ok2, _ = _run_once(
+            ok2, info2 = _run_once(
                 cfg,
                 is_reasoning=not base_is_reasoning,
                 dump_json=dump_json,
                 max_chars=max_chars,
             )
             if not ok2:
-                print(f"[FAIL] {key} (toggle run)")
+                print(f"[FAIL] {key} (toggle run): {info2}")
                 failed += 1
             else:
                 print(f"[OK]   {key} (toggle run)")
