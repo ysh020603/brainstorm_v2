@@ -148,8 +148,10 @@ def build_api_and_inference_config(cfg: dict) -> tuple[dict, dict]:
         "model": cfg["model_name"],
         "temperature": cfg.get("temperature", 0.1),
     }
-    if cfg.get("is_reasoning"):
-        inference_config["is_reasoning"] = True
+    # is_reasoning 支持三态：True/False/null（缺省）。
+    # null/缺省 → 不写入字段，下游不附加任何 thinking 相关 extra_body。
+    if cfg.get("is_reasoning") is not None:
+        inference_config["is_reasoning"] = cfg["is_reasoning"]
     if cfg.get("top_p") is not None:
         inference_config["top_p"] = cfg["top_p"]
     if cfg.get("max_tokens") is not None:
@@ -183,9 +185,11 @@ async def evaluate_single_question(
     ]
 
     call_kwargs = dict(inference_config)
-    is_reasoning = call_kwargs.pop("is_reasoning", False)
-    
-    if not is_reasoning:
+    # 三态：True/False/缺省。仅在显式 False 时关闭 thinking；其他情况不干预。
+    _MISSING = object()
+    is_reasoning = call_kwargs.pop("is_reasoning", _MISSING)
+
+    if is_reasoning is False:
         model_name = call_kwargs.get("model", "")
         if "glm" in model_name.lower():
             call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -324,7 +328,7 @@ async def evaluate_file(
         return False
 
     # 创建新的根字典字段
-    data["cpss_evaluation_per_agent"] = {}
+    data[f"cpss_evaluation_per_agent_{inference_config['model']}"] = {}
     file_all_ok = True
 
     # 针对每个 Agent 发起 55 个维度的评测
@@ -360,7 +364,7 @@ async def evaluate_file(
                 file_all_ok = False
                 
         # 保存特定 Agent 的分数
-        data["cpss_evaluation_per_agent"][agent_name] = {
+        data[f"cpss_evaluation_per_agent_{inference_config['model']}"][agent_name] = {
             "agent_id": agent_id,
             "position": position,
             "config_key": config_key,

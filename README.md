@@ -23,6 +23,7 @@
 | **Single Human 实验** | `app.py` | 1 个人类与多个不同 LLM 讨论，收集人类对各 LLM 的偏好排名 | 1 |
 | **Multiplayer 实验** | `app_multiplayer.py` | 多个人类与多个 LLM 共同讨论，直观衡量 Human 与 LLM 的能力差距 | 2–4 |
 | **第三方标注评估** | `app_eval_ui.py` | 对已有实验日志进行脱敏展示和人工排序标注（离线评估） | — |
+| **人类 Agent-Level CPSS 标注** | `human_cpss_ui/app_human_cpss.py` | 对已有实验日志进行脱敏展示，并对**每个 Agent**进行 CPSS 55 维独立打分（离线评估） | — |
 
 ## 讨论模式
 
@@ -71,9 +72,11 @@ brainstorm_v2/
 ├── app.py                      # Single Human 实验前端（1 人类 + N 个 LLM）
 ├── app_multiplayer.py          # Multiplayer 实验前端（多人类 + N 个 LLM）
 ├── app_eval_ui.py              # 第三方标注评估系统（脱敏展示 + 人工排序）
+├── human_cpss_ui/              # 人类 Agent-Level CPSS 标注系统（脱敏展示 + 55 维独立打分）
 ├── room_manager.py             # 联机房间全局状态管理器
-├── main_batch.py               # 纯 LLM 批量实验入口
-├── run_batch.sh                # 纯 LLM 批量实验脚本
+├── main_batch.py               # 纯 LLM 批量实验入口（单次运行）
+├── run_batch.sh                # 纯 LLM 批量实验脚本（手动指定一组模型）
+├── batch_experiment.py         # 多模型全量调度实验（Topic × Format × N 局，带配额追踪/断点续传）
 ├── api_test.py                 # LLM API 连通性检测工具
 ├── cpss_evaluator.py           # CPSS（Creative Product Semantic Scale）55 维自动化评估脚本
 ├── requirements.txt            # Python 依赖
@@ -241,6 +244,59 @@ python main_batch.py \
   --topic "人工智能技术能怎样帮助解决三体问题？"
 ```
 
+#### 全量调度实验（推荐）：`batch_experiment.py`
+
+`run_batch.sh` 只支持一次跑一组固定模型 + 一个 Topic。当我们想让 **整个模型池中的每个模型** 在 **每种 Format**、**每个 Topic** 下都参赛固定次数时，就需要 `batch_experiment.py`。
+
+**典型场景**：模型池有 N 个模型，希望每个模型在每个 (Topic, Format) 组合上都"出场" 4 次，每局 4 个不同模型，共 N 局；遍历 6 个 Topic × 4 种 Format。
+
+**核心机制**：
+
+1. **Topic 列表硬编码**：脚本顶部 `TOPICS` 列表里硬编码 6 个候选 Topic。日常调试时直接 `#` 注释掉不想跑的，脚本只遍历未注释项。
+2. **模型池加载**：从 `config/llm_config.json` 读取所有 `config_key`，构建候选池。
+3. **防死锁调度算法**：每个 (Topic, Format) 下采用"剩余配额最多优先"的贪心算法，预先生成 N 局对局名单。
+   - 主键：每个模型剩余出场次数（降序）——保证 N ≥ 4 时绝不会"凑不齐 4 个不同模型"。
+   - 次键：基于 hashlib 对 (game_idx, model) 哈希——让搭档组合在不同局之间充分洗牌（实测 12 模型 × 12 局可形成约 50 对独立搭档）。
+   - 完全确定性，可复现。
+4. **配额追踪器**：`Tracker[Topic][Format][Model]` 记录每个模型在每个 (Topic, Format) 下的出场次数，单局成功落盘后才扣配额。
+5. **失败回滚 + 重新入队**：若单局某个模型 API 失败（重试用尽），整局**不扣配额**、**安全销毁日志**、**重新推入队列**，保证最终每个模型成功出场次数绝对精确。
+6. **断点续传**：状态写入 `log_test/batch_experiment_state.json`，崩溃或人为中断后再次运行可从未完成处继续，不会重跑已完成的对局。
+7. **日志按层归档**：实验日志保存到 `log_test/log/{topic_slug}/{format}/{模式}_{Agent数}_0_{时间戳}.json`，可被 `cpss_evaluator.py` / `calculate_metrics.py` 直接消费。
+
+**运行方式**：
+
+```bash
+# 完整跑：6 Topics × 4 Formats × N 局（N = 模型池大小）
+python batch_experiment.py
+
+# 只看调度计划，不调 API（验证 Topic / 模型池配置）
+python batch_experiment.py --dry-run
+
+# 单测一个 (Topic, Format) 组合
+python batch_experiment.py --only-topic 2 --only-format brainwrite
+
+# 重置状态从头跑（删除断点续传文件）
+python batch_experiment.py --reset
+
+# 指定其他配置文件
+python batch_experiment.py --config config/llm_config_1.json
+```
+
+**关键可调常量**（在 `batch_experiment.py` 顶部统一管理）：
+
+| 常量 | 默认 | 含义 |
+|------|------|------|
+| `TOPICS` | 6 个 Topic 字符串 | 候选 Topic 列表，`#` 注释即跳过 |
+| `TARGET_PER_MODEL` | `4` | 每模型在同一 (Topic, Format) 下的出场次数 |
+| `GROUP_SIZE` | `4` | 每局参赛模型数 |
+| `MAX_ROUNDS` | `4` | 单局讨论的最大轮数 |
+| `LEADER_IDS_DEFAULT` | `[1]` | leader_worker 模式的默认 Leader 位置 |
+| `MAX_GAME_RETRIES` | `3` | 单次尝试内的连续重试上限（指数退避） |
+| `MAX_QUEUE_REINSERTS` | `5` | 单局允许被重新入队的最大次数（防死循环） |
+| `RETRY_BACKOFF_SEC` | `5.0` | 指数退避基准秒数 |
+
+**结束后的配额校验**：脚本结束时会在控制台打印每个 (Topic, Format) 的配额追踪结果，若任一模型未达到 `TARGET_PER_MODEL` 会高亮 ⚠ 偏差信息，便于定位异常。
+
 ### 实验二：Single Human 实验
 
 **目的**：让 1 个人类与多个不同的 LLM Agent 进行头脑风暴讨论，讨论结束后收集人类对各 LLM 的**偏好排名**（即人类更喜欢哪个 LLM 的表现），用于评估不同 LLM 在人类眼中的讨论能力。
@@ -357,6 +413,37 @@ streamlit run app_eval_ui.py
    - 同时将已标注文件路径追加到用户的历史记录中
    - 提交后自动刷新页面，已标注文件从待标注列表中消失
 
+### 人类 Agent-Level CPSS 标注系统（独立 Agent 打分）
+
+**目的**：由第三方标注人员对已有讨论日志进行脱敏阅读，并对**每个 Agent**的聚合发言内容进行 **CPSS 55 维**独立打分（1–7 分，4 为中性），生成可用于后续分析的人工语义量表数据。
+
+```bash
+streamlit run human_cpss_ui/app_human_cpss.py
+```
+
+**工作流程**：
+
+1. **用户登录与历史记录**：
+   - 首屏输入标注人员姓名
+   - 系统在 `human_cpss_ui/human_user_log/` 下加载或创建该用户历史记录：`<user_name>_history.json`
+
+2. **任务池扫描与差集过滤**：
+   - 系统遍历 `human_cpss_ui/app_human_cpss.py` 顶部的 `TARGET_EVAL_DIRS`（支持递归子目录）收集全部 `*.json`
+   - 自动剔除当前用户已标注过的文件，仅展示待标注列表
+
+3. **发言聚合 + 脱敏展示**：
+   - 从 `global_history` 中按 Agent 聚合同一 Agent 的全部发言为一段“综合表现/创意提案”文本（过滤 `system/moderator`）
+   - 使用「文件路径 + 用户名」作为随机种子，将原始 `Agent 1/2/3...` 确定性重映射为 `Agent A/B/C...`，并替换正文中的相互称呼，减少品牌/位置偏见
+
+4. **按 Agent 独立打分（不做全局排序）**：
+   - UI 使用 Tabs 为每个 Agent 提供独立面板：上方展示聚合文本，下方提供 55 个维度的 1–7 单选量表
+   - 提交时强校验：必须对所有 Agent 的所有维度完成打分，否则阻断提交并提示缺失项
+
+5. **并发安全写回**：
+   - 写入原 JSON 顶层字段：`human_eval_per_agent_<User_Name>`（例如 `human_eval_per_agent_Senhao`）
+   - 字段结构以 Agent 为 key，值包含 `agent_id` / `position` / `config_key` / `scores`（55 维打分字典）
+   - 写入时使用文件锁（`filelock`）避免多人并发覆盖
+
 **`3port` 字段格式**：
 
 ```json
@@ -457,7 +544,8 @@ streamlit run app_eval_ui.py
 
 | 实验形态 | 日志目录 | 文件命名 |
 |----------|----------|----------|
-| 纯 LLM | `log/` | `{模式}_{Agent数}_0_{时间戳}.json` |
+| 纯 LLM（`run_batch.sh`） | `log/` | `{模式}_{Agent数}_0_{时间戳}.json` |
+| 纯 LLM 全量调度（`batch_experiment.py`） | `log_test/log/{topic_slug}/{format}/` | `{模式}_{Agent数}_0_{时间戳}.json` |
 | Single Human | `log_human/` | `{模式}_{Agent数}_1_{时间戳}.json` |
 | Multiplayer | `log_human_2/` | `{模式}_{Agent数}_{人类数}_{时间戳}.json` |
 
@@ -487,6 +575,17 @@ streamlit run app_eval_ui.py
       "is_reasoning": true,
       "enable_identity": false,
       "identity_prompt": ""
+    },
+    "GPT-5-mini": {
+      "api_url": "https://api.example.com/v1",
+      "api_key": "your-api-key",
+      "model_name": "gpt-5-mini",
+      "temperature": 0.7,
+      "top_p": null,
+      "max_tokens": null,
+      "is_reasoning": null,
+      "enable_identity": false,
+      "identity_prompt": ""
     }
   }
 }
@@ -502,7 +601,7 @@ streamlit run app_eval_ui.py
 | `model_name` | 实际调用的模型标识 |
 | `temperature` | 采样温度 |
 | `top_p` / `max_tokens` | 可选推理参数，设为 `null` 则使用模型默认值 |
-| `is_reasoning` | 是否为混合推理模型开启推理（如 Qwen3-32B），影响 API 调用方式 |
+| `is_reasoning` | 三态控制混合推理模型的思考开关，影响 API 调用方式：<br>• `true`：显式**开启**推理（不附加任何 `extra_body`，按服务端默认行为推理）<br>• `false`：显式**关闭**推理（自动根据 `model_name` 注入对应的 `extra_body`，例如 `chat_template_kwargs.enable_thinking=false`、`thinking.type=disabled` 等）<br>• `null`：**不添加该参数**，框架完全不干预 thinking，调用时不附加任何 `extra_body`，由服务端 / 模型自身决定（适合那些既不支持也不需要 thinking 控制、或多传参数会报错的端点） |
 | `enable_identity` | 是否启用自定义身份 Prompt |
 | `identity_prompt` | 自定义身份描述（仅 `enable_identity: true` 时生效） |
 

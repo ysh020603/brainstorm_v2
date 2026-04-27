@@ -31,8 +31,10 @@ def _build_api_and_inference(cfg: dict) -> tuple[dict, dict]:
     inference_config: dict = {
         "model": cfg["model_name"],
         "temperature": cfg["temperature"],
-        "is_reasoning": cfg.get("is_reasoning", False),
     }
+    # is_reasoning 支持三态：True/False/null。null/缺省时不写入字段，下游不干预 thinking。
+    if cfg.get("is_reasoning") is not None:
+        inference_config["is_reasoning"] = cfg["is_reasoning"]
     if cfg.get("top_p") is not None:
         inference_config["top_p"] = cfg["top_p"]
     if cfg.get("max_tokens") is not None:

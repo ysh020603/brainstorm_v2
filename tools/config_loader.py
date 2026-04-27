@@ -33,8 +33,12 @@ def build_agent_from_config(model_key: str, pool: dict):
     inference_config: dict = {
         "model": cfg["model_name"],
         "temperature": cfg["temperature"],
-        "is_reasoning": cfg.get("is_reasoning", False),
     }
+    # is_reasoning 支持三态：True/False/null。
+    # 当配置中显式写 null（或缺省）时，不向 inference_config 添加该字段，
+    # 调用端会按服务端默认行为处理（不附加任何 thinking 相关 extra_body）。
+    if cfg.get("is_reasoning") is not None:
+        inference_config["is_reasoning"] = cfg["is_reasoning"]
     if cfg.get("top_p") is not None:
         inference_config["top_p"] = cfg["top_p"]
     if cfg.get("max_tokens") is not None:

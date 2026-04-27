@@ -21,6 +21,9 @@ def _truncate_by_words(text: str, max_words: int = MAX_REPLY_WORDS) -> str:
     return " ".join(words[:max_words]) + " [Truncated]"
 
 
+_MISSING = object()
+
+
 def call_openai(
     messages: list[dict],
     api_config: dict,
@@ -32,14 +35,17 @@ def call_openai(
         messages: 完整的 messages 列表 (system / user / assistant)。
         api_config: 传给 OpenAI 客户端的参数，如 api_key、base_url。
         inference_config: 传给 chat.completions.create 的参数，如 model、temperature。
-            可包含 is_reasoning 布尔值控制思考模式。
+            可包含 is_reasoning 控制思考模式：
+              - True  : 显式开启推理（不附加任何 extra_body）；
+              - False : 显式关闭推理（附加 extra_body 关闭 thinking）；
+              - None / 缺省 : 不干预，按服务端默认行为调用，不附加 extra_body。
     """
     client = OpenAI(**api_config)
 
     call_kwargs = dict(inference_config)
-    is_reasoning = call_kwargs.pop("is_reasoning", False)
+    is_reasoning = call_kwargs.pop("is_reasoning", _MISSING)
 
-    if not is_reasoning:
+    if is_reasoning is False:
         model_name = str(call_kwargs.get("model", ""))
         model_name_l = model_name.lower()
         if "kimi" in model_name_l:
@@ -57,6 +63,7 @@ def call_openai(
             call_kwargs["extra_body"] = {
                 "chat_template_kwargs": {"enable_thinking": False}
             }
+    # is_reasoning is True / None / _MISSING 时：不附加 extra_body，按服务端默认行为调用
 
     completion = client.chat.completions.create(
         messages=messages,

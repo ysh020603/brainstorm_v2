@@ -36,7 +36,13 @@ def _build_api_config(cfg: dict) -> dict:
     }
 
 
-def _build_call_kwargs(cfg: dict, *, is_reasoning: bool) -> dict:
+def _build_call_kwargs(cfg: dict, *, is_reasoning: bool | None) -> dict:
+    """根据 is_reasoning 三态生成 chat.completions.create 的 kwargs。
+
+    - True : 显式开启推理（不附加 extra_body）；
+    - False: 显式关闭推理（附加 extra_body 关闭 thinking）；
+    - None : 不干预，按服务端默认行为调用。
+    """
     call_kwargs: dict[str, Any] = {
         "model": cfg["model_name"],
         "temperature": cfg["temperature"],
@@ -46,7 +52,7 @@ def _build_call_kwargs(cfg: dict, *, is_reasoning: bool) -> dict:
     if cfg.get("max_tokens") is not None:
         call_kwargs["max_tokens"] = cfg["max_tokens"]
 
-    if not is_reasoning:
+    if is_reasoning is False:
         model_name = str(call_kwargs.get("model", ""))
         model_name_l = model_name.lower()
         if "kimi" in model_name_l:
@@ -126,7 +132,7 @@ def _truncate(text: str, max_chars: int | None) -> str:
     return text[:max_chars] + f"\n...[truncated, total_chars={len(text)}]"
 
 
-def _run_once(cfg: dict, *, is_reasoning: bool, dump_json: bool, max_chars: int | None) -> tuple[bool, str]:
+def _run_once(cfg: dict, *, is_reasoning: bool | None, dump_json: bool, max_chars: int | None) -> tuple[bool, str]:
     api_config = _build_api_config(cfg)
     call_kwargs = _build_call_kwargs(cfg, is_reasoning=is_reasoning)
 
@@ -216,7 +222,9 @@ def main() -> int:
 
     for key in keys:
         cfg = pool[key]
-        base_is_reasoning = bool(cfg.get("is_reasoning", False))
+        # 保留三态：True / False / None（None 表示不干预 thinking）
+        raw = cfg.get("is_reasoning", None)
+        base_is_reasoning: bool | None = raw if isinstance(raw, bool) else None
 
         ok, info = _run_once(
             cfg,
@@ -231,9 +239,11 @@ def main() -> int:
         print(f"[OK]   {key} (primary run)")
 
         if args.toggle_reasoning:
+            # toggle 语义：None 视为 False 取反 → True；True/False 互换
+            toggled: bool = not (base_is_reasoning is True)
             ok2, info2 = _run_once(
                 cfg,
-                is_reasoning=not base_is_reasoning,
+                is_reasoning=toggled,
                 dump_json=dump_json,
                 max_chars=max_chars,
             )
