@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
-"""多模型纯 AI 讨论组批量实验脚本。
+"""多模型纯 AI 讨论组批量实验（leader_worker 2-Leader / 2-Worker 专用版）。
 
-设计目标
-========
-对每个 (Topic × Format) 组合，让模型池中的全部 N 个模型，每个都"作为参赛者"
-出场恰好 4 次，每局 4 个不同模型，共 N 局；并对全部 6 个 Topic × 4 种 Format
-做笛卡尔积遍历。
+与通用版 ``batch_experiment.py`` 的差异
+======================================
+1) 只跑 ``leader_worker`` 一种讨论形式；其它 format 全部不参与。
+2) Leader/Worker 比例固定为 ``2 : 2``（即 ``leader_ids = [1, 2]``，
+   每局 4 个 Agent 中 position=1、2 担任 Leader，position=3、4 担任 Worker）。
+3) 日志保存在 ``<LOG_ROOT>/<topic_slug>/leader_worker_22/`` 下，
+   与原 ``leader_worker``（默认 1 Leader / 3 Worker）的结果分目录互不污染。
+4) 状态文件独立为 ``batch_experiment_leader_worker_22_state.json``，
+   断点续传、配额追踪与原脚本完全隔离。
 
-核心保证
---------
-1) 配额精确：单局成功完成才扣配额，失败回滚并重新入队。
-2) 防死锁调度：每局从"剩余配额最多 + 名字升序"中选 4 个，
-   N ≥ 4 时该贪心可证不会出现"凑不齐 4 个不同模型"的死锁。
-3) 断点续传：状态写入 STATE_FILE，崩溃后再次运行可从未完成处继续。
+其余所有保证（精确配额、防死锁调度、断点续传、重试与回滚）均与
+``batch_experiment.py`` 保持一致。
 
 使用示例
 --------
-    # 默认：跑全部 6 个 Topic × 4 种 Format
-    python batch_experiment.py
+    # 默认：跑全部 6 个 Topic × leader_worker(2-2)
+    python batch_experiment_leader_worker_22.py
 
-    # 只跑某一个 Topic（直接在 TOPICS 列表里注释掉其它即可）
-    # 或者：仅干跑（dry-run）查看调度计划
-    python batch_experiment.py --dry-run
+    # 仅干跑（dry-run）查看调度计划
+    python batch_experiment_leader_worker_22.py --dry-run
 
     # 重置状态从头跑
-    python batch_experiment.py --reset
+    python batch_experiment_leader_worker_22.py --reset
+
+    # 只跑 TOPICS 中的某一个 Topic（1-based）
+    python batch_experiment_leader_worker_22.py --only-topic 3
 """
 
 from __future__ import annotations
@@ -43,10 +45,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from agents.agent_base import EnvState
-from envs.brainwrite import BrainWrite
 from envs.leader_worker import LeaderWorker
-from envs.random_env import RandomEnv
-from envs.round_robin import RoundRobin
 from tools.config_loader import build_agent_from_config, load_llm_config
 
 
@@ -54,7 +53,7 @@ from tools.config_loader import build_agent_from_config, load_llm_config
 # 一、全局配置与数据定义
 # ============================================================
 
-# 1) Topic 列表（硬编码）。日常调试时 `#` 注释掉不想跑的 topic 即可。
+# 1) Topic 列表（与 batch_experiment.py 一致；调试时注释掉不想跑的即可）
 TOPICS: list[str] = [
     "Features for a next-generation smartphone.",
     "Ways to reduce food waste at home.",
@@ -64,29 +63,29 @@ TOPICS: list[str] = [
     "Creative uses for drones in everyday life.",
 ]
 
-# 2) 4 种讨论形式与对应 Env 类
-ENV_MAP: dict[str, Any] = {
-    "random": RandomEnv,
-    "round_robin": RoundRobin,
-    "leader_worker": LeaderWorker,
-    "brainwrite": BrainWrite,
-}
-FORMATS: list[str] = list(ENV_MAP.keys())
+# 2) 本脚本固定 Format / Env / 子目录名
+FORMAT_NAME: str = "leader_worker"          # Env 类型仍是 leader_worker
+LOG_SUBDIR_NAME: str = "leader_worker_22"   # 但日志写入这个独立子目录
+ENV_CLS: Any = LeaderWorker
 
 # 3) 实验参数
-TARGET_PER_MODEL: int = 4   # 每个模型在同一 (Topic, Format) 上的出场次数
+TARGET_PER_MODEL: int = 4   # 每个模型在该 (Topic, Format) 上的出场次数
 GROUP_SIZE: int = 4         # 每局参赛模型数
 MAX_ROUNDS: int = 4         # 单局讨论的最大轮数
-LEADER_IDS_DEFAULT: list[int] = [1]  # leader_worker 模式默认让 position=1 担任 Leader
+
+# 关键差异：2 Leader + 2 Worker
+LEADER_IDS: list[int] = [1, 2]
 
 # 4) 路径与重试参数
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_ROOT = os.path.join(PROJECT_ROOT, "log_test", "log")
-STATE_FILE = os.path.join(PROJECT_ROOT, "log_test", "batch_experiment_state.json")
+STATE_FILE = os.path.join(
+    PROJECT_ROOT, "log_test", "batch_experiment_leader_worker_22_state.json"
+)
 DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "llm_config.json")
 
-MAX_GAME_RETRIES: int = 3       # 单局最多重试次数（失败计数器）
-MAX_QUEUE_REINSERTS: int = 5    # 单局允许被重新入队的最大次数（防止死循环）
+MAX_GAME_RETRIES: int = 3       # 单局最多重试次数
+MAX_QUEUE_REINSERTS: int = 5    # 单局允许被重新入队的最大次数
 RETRY_BACKOFF_SEC: float = 5.0  # 重试基准等待秒数（指数退避）
 
 
@@ -127,16 +126,16 @@ def _save_state(state: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def _run_key(topic: str, fmt: str) -> str:
-    """状态文件中 (Topic, Format) 的唯一键。"""
-    return f"{_topic_slug(topic, max_len=80)}::{fmt}"
+def _run_key(topic: str) -> str:
+    """状态文件中 (Topic, Format=leader_worker_22) 的唯一键。"""
+    return f"{_topic_slug(topic, max_len=80)}::{LOG_SUBDIR_NAME}"
 
 
 # ============================================================
-# 三、防死锁调度算法
+# 三、防死锁调度算法（与通用版一致）
 # ============================================================
 
-def _tiebreak_hash(model: str, game_idx: int, salt: str = "brainstorm-v2") -> int:
+def _tiebreak_hash(model: str, game_idx: int, salt: str = "brainstorm-v2-lw22") -> int:
     """确定性次级排序键：基于 hashlib，让每局的 tie-break 顺序不同，
     从而促使搭档组合在不同局中尽量分散。"""
     digest = hashlib.md5(f"{salt}|{game_idx}|{model}".encode("utf-8")).digest()
@@ -153,10 +152,6 @@ def generate_schedule(
     采用 "剩余配额降序 + 局号哈希混淆" 的贪心：
     - 主键：剩余配额降序（保证 N ≥ group_size 时不会死锁）
     - 次键：每局用 hashlib(game_idx + model) 旋转，让搭档组合在不同局充分洗牌
-      （依然完全确定性、可复现）。
-
-    可证：只要主键是"剩余配额降序"，目标可达性就成立——
-    剩余配额 > 0 的模型数量在任何时刻都 ≥ group_size（当 N ≥ group_size 时）。
     """
     if len(models) < group_size:
         raise ValueError(
@@ -200,30 +195,24 @@ def generate_schedule(
 
 def _run_single_game(
     topic: str,
-    fmt: str,
     model_keys: list[str],
     pool: dict,
     log_dir: str,
 ) -> tuple[str | None, Exception | None]:
-    """执行单场讨论。返回 (log_path, error)。失败时 log_path=None。"""
+    """执行单场 leader_worker(2-2) 讨论。返回 (log_path, error)。失败时 log_path=None。"""
     try:
         agents = [build_agent_from_config(k, pool) for k in model_keys]
-        env_cls = ENV_MAP[fmt]
-        kwargs = dict(
+        env = ENV_CLS(
             agents=agents,
             topic=topic,
             max_rounds=MAX_ROUNDS,
             log_dir=log_dir,
+            leader_ids=LEADER_IDS,
         )
-        if fmt == "leader_worker":
-            kwargs["leader_ids"] = LEADER_IDS_DEFAULT
-        env = env_cls(**kwargs)
         env.init()
 
-        step_count = 0
         while env.state != EnvState.FINISHED:
             env.step()
-            step_count += 1
 
         log_path = env.save_log()
         return log_path, None
@@ -233,7 +222,6 @@ def _run_single_game(
 
 def _attempt_with_retries(
     topic: str,
-    fmt: str,
     model_keys: list[str],
     pool: dict,
     log_dir: str,
@@ -241,7 +229,7 @@ def _attempt_with_retries(
     """单局重试（指数退避）。完全失败返回 None，调用方决定是否回滚。"""
     last_err: Exception | None = None
     for attempt in range(1, MAX_GAME_RETRIES + 1):
-        log_path, err = _run_single_game(topic, fmt, model_keys, pool, log_dir)
+        log_path, err = _run_single_game(topic, model_keys, pool, log_dir)
         if log_path is not None:
             return log_path
         last_err = err
@@ -258,12 +246,11 @@ def _attempt_with_retries(
 
 
 # ============================================================
-# 五、(Topic × Format) 调度循环
+# 五、(Topic) 调度循环（Format 固定为 leader_worker_22）
 # ============================================================
 
-def _run_topic_format(
+def _run_topic(
     topic: str,
-    fmt: str,
     pool: dict,
     state: dict,
     dry_run: bool = False,
@@ -272,12 +259,13 @@ def _run_topic_format(
     schedule = generate_schedule(models)
     n_games = len(schedule)
 
-    key = _run_key(topic, fmt)
+    key = _run_key(topic)
     run_state = state["runs"].setdefault(
         key,
         {
             "topic": topic,
-            "format": fmt,
+            "format": LOG_SUBDIR_NAME,
+            "leader_ids": LEADER_IDS,
             "models_snapshot": models,
             "completed": 0,
             "tracker": {m: 0 for m in models},
@@ -297,7 +285,8 @@ def _run_topic_format(
 
     completed = run_state["completed"]
     _print(
-        f"▶ Topic={topic!r} | Format={fmt} | 计划 {n_games} 局 | 已完成 {completed} 局"
+        f"▶ Topic={topic!r} | Format={LOG_SUBDIR_NAME} (leaders={LEADER_IDS}) "
+        f"| 计划 {n_games} 局 | 已完成 {completed} 局"
     )
 
     if dry_run:
@@ -306,7 +295,7 @@ def _run_topic_format(
             _print(f"   [{mark}] 第 {idx:>2}/{n_games} 局: {group}")
         return
 
-    log_dir = os.path.join(LOG_ROOT, _topic_slug(topic), fmt)
+    log_dir = os.path.join(LOG_ROOT, _topic_slug(topic), LOG_SUBDIR_NAME)
     os.makedirs(log_dir, exist_ok=True)
 
     queue: list[tuple[int, list[str], int]] = [
@@ -316,13 +305,13 @@ def _run_topic_format(
     while queue:
         idx, group, reinserts = queue.pop(0)
         _print(f"   ▷ 第 {idx:>2}/{n_games} 局 | 模型: {group}")
-        log_path = _attempt_with_retries(topic, fmt, group, pool, log_dir)
+        log_path = _attempt_with_retries(topic, group, pool, log_dir)
 
         if log_path is None:
             if reinserts >= MAX_QUEUE_REINSERTS:
                 _print(
                     f"   ✗ 第 {idx} 局重新入队 {reinserts} 次仍失败，跳过。"
-                    f" 该组合 (Topic={topic!r}, Format={fmt}) 配额不再精确。"
+                    f" 该组合 (Topic={topic!r}, Format={LOG_SUBDIR_NAME}) 配额不再精确。"
                 )
                 continue
             _print(
@@ -345,7 +334,9 @@ def _run_topic_format(
 # ============================================================
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="多模型纯 AI 讨论组批量实验")
+    parser = argparse.ArgumentParser(
+        description="多模型纯 AI 讨论组批量实验（leader_worker 2-Leader / 2-Worker 专用）"
+    )
     parser.add_argument(
         "--config",
         default=DEFAULT_CONFIG_PATH,
@@ -367,13 +358,6 @@ def parse_args():
         default=None,
         help="只跑 TOPICS 列表中第 N 个 Topic（1-based 索引），便于单测",
     )
-    parser.add_argument(
-        "--only-format",
-        type=str,
-        default=None,
-        choices=FORMATS,
-        help="只跑指定的 Format，便于单测",
-    )
     return parser.parse_args()
 
 
@@ -385,6 +369,12 @@ def main() -> int:
         _print(f"❌ 模型池为空，请检查 {args.config}")
         return 2
 
+    if GROUP_SIZE - len(LEADER_IDS) <= 0 or len(LEADER_IDS) <= 0:
+        _print(
+            f"❌ LEADER_IDS={LEADER_IDS} 与 GROUP_SIZE={GROUP_SIZE} 不构成 2-2 配置。"
+        )
+        return 2
+
     active_topics = [t for t in TOPICS if t and t.strip()]
     if not active_topics:
         _print("❌ TOPICS 列表为空（或全部被注释），无事可做。")
@@ -393,11 +383,11 @@ def main() -> int:
     if args.only_topic is not None:
         idx = args.only_topic - 1
         if not (0 <= idx < len(active_topics)):
-            _print(f"❌ --only-topic={args.only_topic} 越界（共 {len(active_topics)} 个有效 Topic）")
+            _print(
+                f"❌ --only-topic={args.only_topic} 越界（共 {len(active_topics)} 个有效 Topic）"
+            )
             return 2
         active_topics = [active_topics[idx]]
-
-    selected_formats = [args.only_format] if args.only_format else FORMATS
 
     if args.reset and os.path.exists(STATE_FILE):
         os.remove(STATE_FILE)
@@ -406,18 +396,17 @@ def main() -> int:
     state = _load_state()
 
     _print("=" * 60)
-    _print(f"模型池规模 N = {len(pool)}（每个 (Topic, Format) 共 {len(pool)} 局）")
+    _print(f"模型池规模 N = {len(pool)}（每个 Topic 共 {len(pool)} 局）")
     _print(f"有效 Topic: {len(active_topics)} 个")
-    _print(f"Format: {selected_formats}")
-    _print(f"目标总局数: {len(active_topics) * len(selected_formats) * len(pool)}")
+    _print(f"Format: {LOG_SUBDIR_NAME}（基于 {FORMAT_NAME}，leader_ids={LEADER_IDS}）")
+    _print(f"目标总局数: {len(active_topics) * len(pool)}")
     _print(f"状态文件: {STATE_FILE}")
-    _print(f"日志根目录: {LOG_ROOT}")
+    _print(f"日志根目录: {LOG_ROOT}（每 Topic 写入 .../<topic>/{LOG_SUBDIR_NAME}/）")
     _print("=" * 60)
 
     for t_idx, topic in enumerate(active_topics, 1):
         _print(f"\n###### Topic {t_idx}/{len(active_topics)}: {topic!r} ######")
-        for fmt in selected_formats:
-            _run_topic_format(topic, fmt, pool, state, dry_run=args.dry_run)
+        _run_topic(topic, pool, state, dry_run=args.dry_run)
 
     _print("\n" + "=" * 60)
     if args.dry_run:

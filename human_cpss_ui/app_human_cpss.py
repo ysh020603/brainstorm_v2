@@ -10,6 +10,7 @@
     - 按 Agent 独立打分（CPSS 55 维双极语义量表，1-7 分）
     - 标注结果写回原 JSON 的 `human_eval_per_agent_<UserName>` 字段
     - 文件锁保证并发安全
+    - 支持辅助翻译系统，调用 DeepSeek-v4-flash (屏蔽思考过程) 进行多线程并行翻译加速
 """
 
 from __future__ import annotations
@@ -17,11 +18,13 @@ from __future__ import annotations
 import json
 import os
 import random
+import concurrent.futures  # 新增：用于多线程并行翻译
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 from filelock import FileLock
+import openai  # 新增：用于调用 DeepSeek API
 
 # ═══════════════════════════════════════════════════════════════
 # 后台配置项
@@ -53,62 +56,135 @@ AGENT_AVATARS: list[str] = ["🔵", "🟢", "🟠", "🔴", "🟣", "🟡", "⚪
 # ═══════════════════════════════════════════════════════════════
 
 CPSS_ITEMS: list[dict[str, Any]] = [
-    {"id": 1,  "left": "Over Used",      "right": "Fresh",            "key": "Q01_OverUsed_Fresh"},
-    {"id": 2,  "left": "Stale",          "right": "Startling",        "key": "Q02_Stale_Startling"},
-    {"id": 3,  "left": "Illogical",      "right": "Logical",          "key": "Q03_Illogical_Logical"},
-    {"id": 4,  "left": "Usual",          "right": "Unusual",          "key": "Q04_Usual_Unusual"},
-    {"id": 5,  "left": "Inadequate",     "right": "Adequate",         "key": "Q05_Inadequate_Adequate"},
-    {"id": 6,  "left": "Original",       "right": "Conventional",     "key": "Q06_Original_Conventional"},
-    {"id": 7,  "left": "Trendy",         "right": "Outdated",         "key": "Q07_Trendy_Outdated"},
-    {"id": 8,  "left": "Unique",         "right": "Ordinary",         "key": "Q08_Unique_Ordinary"},
-    {"id": 9,  "left": "Functional",     "right": "Nonfunctional",    "key": "Q09_Functional_Nonfunctional"},
-    {"id": 10, "left": "Useful",         "right": "Useless",          "key": "Q10_Useful_Useless"},
-    {"id": 11, "left": "Irrelevant",     "right": "Relevant",         "key": "Q11_Irrelevant_Relevant"},
-    {"id": 12, "left": "Trivial",        "right": "Important",        "key": "Q12_Trivial_Important"},
-    {"id": 13, "left": "Novel",          "right": "Predictable",      "key": "Q13_Novel_Predictable"},
-    {"id": 14, "left": "Surprising",     "right": "Commonplace",      "key": "Q14_Surprising_Commonplace"},
-    {"id": 15, "left": "Germane",        "right": "Inappropriate",    "key": "Q15_Germane_Inappropriate"},
-    {"id": 16, "left": "Resourceful",    "right": "Unresourceful",    "key": "Q16_Resourceful_Unresourceful"},
-    {"id": 17, "left": "Inoperable",     "right": "Workable",         "key": "Q17_Inoperable_Workable"},
-    {"id": 18, "left": "Tasteful",       "right": "Tasteless",        "key": "Q18_Tasteful_Tasteless"},
-    {"id": 19, "left": "Organic",        "right": "Contrived",        "key": "Q19_Organic_Contrived"},
-    {"id": 20, "left": "Well Made",      "right": "Poorly Made",      "key": "Q20_WellMade_PoorlyMade"},
-    {"id": 21, "left": "Valuable",       "right": "Worthless",        "key": "Q21_Valuable_Worthless"},
-    {"id": 22, "left": "Shocking",       "right": "Old-Fashioned",    "key": "Q22_Shocking_OldFashioned"},
-    {"id": 23, "left": "Elaborate",      "right": "Simple",           "key": "Q23_Elaborate_Simple"},
-    {"id": 24, "left": "Misunderstood",  "right": "Understood",       "key": "Q24_Misunderstood_Understood"},
-    {"id": 25, "left": "Exciting",       "right": "Dull",             "key": "Q25_Exciting_Dull"},
-    {"id": 26, "left": "Inspired",       "right": "Uninspired",       "key": "Q26_Inspired_Uninspired"},
-    {"id": 27, "left": "Hostile",        "right": "Inviting",         "key": "Q27_Hostile_Inviting"},
-    {"id": 28, "left": "Elegant",        "right": "Inelegant",        "key": "Q28_Elegant_Inelegant"},
-    {"id": 29, "left": "Valid",          "right": "Invalid",          "key": "Q29_Valid_Invalid"},
-    {"id": 30, "left": "Expressive",     "right": "Unexpressive",     "key": "Q30_Expressive_Unexpressive"},
-    {"id": 31, "left": "Ambitious",      "right": "Unambitious",      "key": "Q31_Ambitious_Unambitious"},
-    {"id": 32, "left": "Vital",          "right": "Unimportant",      "key": "Q32_Vital_Unimportant"},
-    {"id": 33, "left": "Effective",      "right": "Ineffective",      "key": "Q33_Effective_Ineffective"},
-    {"id": 34, "left": "Progressive",    "right": "Regressive",       "key": "Q34_Progressive_Regressive"},
-    {"id": 35, "left": "Imaginative",    "right": "Unimaginative",    "key": "Q35_Imaginative_Unimaginative"},
-    {"id": 36, "left": "Avant-Garde",    "right": "Old-Guard",        "key": "Q36_AvantGarde_OldGuard"},
-    {"id": 37, "left": "Radical",        "right": "Old Hat",          "key": "Q37_Radical_OldHat"},
-    {"id": 38, "left": "Unpolished",     "right": "Polished",         "key": "Q38_Unpolished_Polished"},
-    {"id": 39, "left": "Complete",       "right": "Incomplete",       "key": "Q39_Complete_Incomplete"},
-    {"id": 40, "left": "Cohesive",       "right": "Disjointed",       "key": "Q40_Cohesive_Disjointed"},
-    {"id": 41, "left": "Needed",         "right": "Unneeded",         "key": "Q41_Needed_Unneeded"},
-    {"id": 42, "left": "Meticulous",     "right": "Careless",         "key": "Q42_Meticulous_Careless"},
-    {"id": 43, "left": "Revolutionary",  "right": "Pedestrian",       "key": "Q43_Revolutionary_Pedestrian"},
-    {"id": 44, "left": "Pleasurable",    "right": "Unpleasant",       "key": "Q44_Pleasurable_Unpleasant"},
-    {"id": 45, "left": "Crude",          "right": "Well-Crafted",     "key": "Q45_Crude_WellCrafted"},
-    {"id": 46, "left": "Visionary",      "right": "Mundane",          "key": "Q46_Visionary_Mundane"},
-    {"id": 47, "left": "Insightful",     "right": "Trite",            "key": "Q47_Insightful_Trite"},
-    {"id": 48, "left": "Desire",         "right": "Undesirable",      "key": "Q48_Desire_Undesirable"},
-    {"id": 49, "left": "Deliberate",     "right": "Random",           "key": "Q49_Deliberate_Random"},
-    {"id": 50, "left": "Appealing",      "right": "Unappealing",      "key": "Q50_Appealing_Unappealing"},
-    {"id": 51, "left": "Detailed",       "right": "Sketchy",          "key": "Q51_Detailed_Sketchy"},
-    {"id": 52, "left": "Feasible",       "right": "Unfeasible",       "key": "Q52_Feasible_Unfeasible"},
-    {"id": 53, "left": "Meaningful",     "right": "Meaningless",      "key": "Q53_Meaningful_Meaningless"},
-    {"id": 54, "left": "Flexible",       "right": "Inflexible",       "key": "Q54_Flexible_Inflexible"},
-    {"id": 55, "left": "Overused",       "right": "New",              "key": "Q55_Overused_New"},
+    {"id": 1,  "left": "Over Used (过度使用)",       "right": "Fresh (新鲜)",               "key": "Q01_OverUsed_Fresh"},
+    {"id": 2,  "left": "Stale (陈旧)",               "right": "Startling (令人惊叹)",       "key": "Q02_Stale_Startling"},
+    {"id": 3,  "left": "Illogical (不合逻辑)",       "right": "Logical (合乎逻辑)",         "key": "Q03_Illogical_Logical"},
+    {"id": 4,  "left": "Usual (寻常/普通)",          "right": "Unusual (不寻常/特别)",      "key": "Q04_Usual_Unusual"},
+    {"id": 5,  "left": "Inadequate (不充足/不足)",   "right": "Adequate (充足/足够)",       "key": "Q05_Inadequate_Adequate"},
+    {"id": 6,  "left": "Original (原创/新颖)",       "right": "Conventional (常规/传统)",   "key": "Q06_Original_Conventional"},
+    {"id": 7,  "left": "Trendy (时髦/流行)",         "right": "Outdated (过时)",            "key": "Q07_Trendy_Outdated"},
+    {"id": 8,  "left": "Unique (独特)",              "right": "Ordinary (普通/平凡)",       "key": "Q08_Unique_Ordinary"},
+    {"id": 9,  "left": "Functional (实用/具备功能)", "right": "Nonfunctional (不实用/无功能)", "key": "Q09_Functional_Nonfunctional"},
+    {"id": 10, "left": "Useful (有用)",              "right": "Useless (无用)",             "key": "Q10_Useful_Useless"},
+    {"id": 11, "left": "Irrelevant (无关)",          "right": "Relevant (相关)",            "key": "Q11_Irrelevant_Relevant"},
+    {"id": 12, "left": "Trivial (琐碎/微不足道)",    "right": "Important (重要)",           "key": "Q12_Trivial_Important"},
+    {"id": 13, "left": "Novel (新奇/新颖)",          "right": "Predictable (老套/可预测)",  "key": "Q13_Novel_Predictable"},
+    {"id": 14, "left": "Surprising (令人惊讶)",      "right": "Commonplace (司空见惯)",     "key": "Q14_Surprising_Commonplace"},
+    {"id": 15, "left": "Germane (贴切/密切相关)",    "right": "Inappropriate (不恰当)",     "key": "Q15_Germane_Inappropriate"},
+    {"id": 16, "left": "Resourceful (足智多谋)",     "right": "Unresourceful (缺乏智谋)",   "key": "Q16_Resourceful_Unresourceful"},
+    {"id": 17, "left": "Inoperable (不可操作)",      "right": "Workable (可操作/切实可行)", "key": "Q17_Inoperable_Workable"},
+    {"id": 18, "left": "Tasteful (高雅/有品位)",     "right": "Tasteless (俗气/无品位)",    "key": "Q18_Tasteful_Tasteless"},
+    {"id": 19, "left": "Organic (自然/有机)",        "right": "Contrived (做作/刻意)",      "key": "Q19_Organic_Contrived"},
+    {"id": 20, "left": "Well Made (制作精良)",       "right": "Poorly Made (粗制滥造)",     "key": "Q20_WellMade_PoorlyMade"},
+    {"id": 21, "left": "Valuable (有价值)",          "right": "Worthless (毫无价值)",       "key": "Q21_Valuable_Worthless"},
+    {"id": 22, "left": "Shocking (令人震惊)",        "right": "Old-Fashioned (老派/守旧)",  "key": "Q22_Shocking_OldFashioned"},
+    {"id": 23, "left": "Elaborate (精细/复杂)",      "right": "Simple (简单)",              "key": "Q23_Elaborate_Simple"},
+    {"id": 24, "left": "Misunderstood (被误解)",     "right": "Understood (被理解)",        "key": "Q24_Misunderstood_Understood"},
+    {"id": 25, "left": "Exciting (令人兴奋)",        "right": "Dull (乏味/枯燥)",           "key": "Q25_Exciting_Dull"},
+    {"id": 26, "left": "Inspired (充满灵感)",        "right": "Uninspired (缺乏灵感)",      "key": "Q26_Inspired_Uninspired"},
+    {"id": 27, "left": "Hostile (充满敌意)",         "right": "Inviting (热情/诱人)",       "key": "Q27_Hostile_Inviting"},
+    {"id": 28, "left": "Elegant (优雅)",             "right": "Inelegant (粗俗/不雅)",      "key": "Q28_Elegant_Inelegant"},
+    {"id": 29, "left": "Valid (有效/合理)",          "right": "Invalid (无效/不合理)",      "key": "Q29_Valid_Invalid"},
+    {"id": 30, "left": "Expressive (富有表现力)",    "right": "Unexpressive (缺乏表现力)",  "key": "Q30_Expressive_Unexpressive"},
+    {"id": 31, "left": "Ambitious (雄心勃勃)",       "right": "Unambitious (胸无大志)",     "key": "Q31_Ambitious_Unambitious"},
+    {"id": 32, "left": "Vital (至关重要)",           "right": "Unimportant (不重要)",       "key": "Q32_Vital_Unimportant"},
+    {"id": 33, "left": "Effective (有效)",           "right": "Ineffective (无效)",         "key": "Q33_Effective_Ineffective"},
+    {"id": 34, "left": "Progressive (进步/前卫)",    "right": "Regressive (倒退/保守)",     "key": "Q34_Progressive_Regressive"},
+    {"id": 35, "left": "Imaginative (富有想象力)",   "right": "Unimaginative (缺乏想象力)", "key": "Q35_Imaginative_Unimaginative"},
+    {"id": 36, "left": "Avant-Garde (先锋/前卫)",    "right": "Old-Guard (保守派/守旧)",    "key": "Q36_AvantGarde_OldGuard"},
+    {"id": 37, "left": "Radical (激进)",             "right": "Old Hat (陈词滥调/老套)",    "key": "Q37_Radical_OldHat"},
+    {"id": 38, "left": "Unpolished (未打磨/粗糙)",   "right": "Polished (精美/润色)",       "key": "Q38_Unpolished_Polished"},
+    {"id": 39, "left": "Complete (完整)",            "right": "Incomplete (不完整)",        "key": "Q39_Complete_Incomplete"},
+    {"id": 40, "left": "Cohesive (连贯/有凝聚力)",   "right": "Disjointed (脱节/散乱)",     "key": "Q40_Cohesive_Disjointed"},
+    {"id": 41, "left": "Needed (必要/被需要)",       "right": "Unneeded (多余/不需要)",     "key": "Q41_Needed_Unneeded"},
+    {"id": 42, "left": "Meticulous (一丝不苟)",      "right": "Careless (粗心大意)",        "key": "Q42_Meticulous_Careless"},
+    {"id": 43, "left": "Revolutionary (革命性)",     "right": "Pedestrian (平庸/乏味)",     "key": "Q43_Revolutionary_Pedestrian"},
+    {"id": 44, "left": "Pleasurable (令人愉悦)",     "right": "Unpleasant (令人不快)",      "key": "Q44_Pleasurable_Unpleasant"},
+    {"id": 45, "left": "Crude (粗糙/简陋)",          "right": "Well-Crafted (精心制作)",    "key": "Q45_Crude_WellCrafted"},
+    {"id": 46, "left": "Visionary (有远见)",         "right": "Mundane (世俗/平凡)",        "key": "Q46_Visionary_Mundane"},
+    {"id": 47, "left": "Insightful (富有洞察力)",    "right": "Trite (老生常谈/平庸)",      "key": "Q47_Insightful_Trite"},
+    {"id": 48, "left": "Desire (渴望/向往)",         "right": "Undesirable (不受欢迎)",     "key": "Q48_Desire_Undesirable"},
+    {"id": 49, "left": "Deliberate (深思熟虑/刻意)", "right": "Random (随机/随意)",         "key": "Q49_Deliberate_Random"},
+    {"id": 50, "left": "Appealing (吸引人)",         "right": "Unappealing (不吸引人)",     "key": "Q50_Appealing_Unappealing"},
+    {"id": 51, "left": "Detailed (详细)",            "right": "Sketchy (粗略/模糊)",        "key": "Q51_Detailed_Sketchy"},
+    {"id": 52, "left": "Feasible (可行)",            "right": "Unfeasible (不可行)",        "key": "Q52_Feasible_Unfeasible"},
+    {"id": 53, "left": "Meaningful (有意义)",        "right": "Meaningless (无意义)",       "key": "Q53_Meaningful_Meaningless"},
+    {"id": 54, "left": "Flexible (灵活)",            "right": "Inflexible (死板/不灵活)",   "key": "Q54_Flexible_Inflexible"},
+    {"id": 55, "left": "Overused (过度使用)",        "right": "New (全新/新颖)",            "key": "Q55_Overused_New"}
 ]
+
+# ═══════════════════════════════════════════════════════════════
+# 新增功能：辅助翻译模块 (带 Streamlit 缓存避免重复消耗 API，支持多线程并行)
+# ═══════════════════════════════════════════════════════════════
+
+@st.cache_data(show_spinner=False)
+def _single_translate(text: str) -> str:
+    """使用 DeepSeek API 进行单个文本翻译并禁用 reasoning_content"""
+    if not text or not text.strip():
+        return ""
+    
+    # 初始化 OpenAI Client
+    client = openai.OpenAI(
+        base_url="https://api.deepseek.com/v1",
+        api_key="sk-a81d0b1ef1cb4ad687c7a14f100113e3",
+    )
+    
+    call_kwargs: dict[str, Any] = {
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {
+                "role": "system", 
+                "content": "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。"
+            },
+            {"role": "user", "content": text}
+        ]
+    }
+    
+    # 强制关闭思考过程的逻辑
+    is_reasoning = False
+    if is_reasoning is False:
+        model_name = str(call_kwargs.get("model", ""))
+        model_name_l = model_name.lower()
+        if "kimi" in model_name_l:
+            # Kimi Instant Mode 通常要求 temperature=0.6
+            call_kwargs["temperature"] = 0.6
+            # Kimi 官方 API：用 thinking.type=disabled 关闭 reasoning_content；
+            # 同时兼容 vLLM/SGLang 模板变量 thinking=false。
+            call_kwargs["extra_body"] = {
+                "thinking": {"type": "disabled"},
+                "chat_template_kwargs": {"thinking": False},
+            }
+        elif "glm" in model_name_l or "deepseek" in model_name_l:
+            call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            call_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": False}
+            }
+
+    try:
+        response = client.chat.completions.create(**call_kwargs)
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"[翻译调用异常: {str(e)}]"
+
+
+def parallel_translate(texts: list[str], max_workers: int = 10) -> dict[str, str]:
+    """多线程并行翻译列表中的所有文本，返回 原文->译文 的字典。"""
+    results = {}
+    if not texts:
+        return results
+        
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有翻译任务
+        future_to_text = {executor.submit(_single_translate, t): t for t in texts}
+        for future in concurrent.futures.as_completed(future_to_text):
+            text = future_to_text[future]
+            try:
+                results[text] = future.result()
+            except Exception as e:
+                results[text] = f"[多线程异常: {str(e)}]"
+                
+    return results
 
 # ═══════════════════════════════════════════════════════════════
 # 工具函数：用户历史
@@ -470,11 +546,14 @@ sorted_agent_names: list[str] = sorted(
 )
 
 # ──────────────────────────────────────
-# 4. 主界面：元信息 + 讨论记录
+# 4. 主界面：元信息 + 并行翻译预处理
 # ──────────────────────────────────────
 
 st.title("🧠 人类 Agent-Level CPSS 打分系统")
 st.markdown(f"**当前文件：** `{selected_file}`")
+
+# 翻译全局开关
+enable_translation = st.toggle("🌐 开启辅助翻译 (并行加速翻译)", value=False)
 
 meta_cols = st.columns(4)
 meta_cols[0].metric("讨论模式", MODE_LABELS.get(metadata.get("mode", ""), metadata.get("mode", "—")))
@@ -483,8 +562,41 @@ meta_cols[2].metric("参与人数", metadata.get("total_agents", len(metadata.ge
 meta_cols[3].metric("Agent 数量", len(sorted_agent_names))
 st.info(f"**讨论话题：** {metadata.get('topic', '(未知话题)')}")
 
+# 🚀 并行翻译预处理阶段 (收集当前文件所有需要翻译的文本)
+translation_cache_dict = {}
+global_history = log_data.get("global_history", [])
+
+if enable_translation:
+    unique_texts_to_translate = set()
+    
+    # 收集讨论记录中的发言
+    for entry in global_history:
+        if entry.get("role") in ["system", "moderator"]:
+            continue
+        orig_id = entry.get("agent_id")
+        if orig_id not in anon_map:
+            continue
+        content = anonymize_content(entry.get("content", ""), anon_map)
+        if content.strip():
+            unique_texts_to_translate.add(content)
+            
+    # 收集综合提案中的发言
+    for agent_name in sorted_agent_names:
+        idea_content = agent_ideas_dict[agent_name]["idea_content"]
+        anonymized_idea = anonymize_content(idea_content, anon_map)
+        if anonymized_idea.strip():
+            unique_texts_to_translate.add(anonymized_idea)
+            
+    if unique_texts_to_translate:
+        # 单一加载动画，统一多线程并行翻译
+        with st.spinner(f"正在多线程并行翻译 {len(unique_texts_to_translate)} 段内容，这可能需要几秒钟..."):
+            translation_cache_dict = parallel_translate(list(unique_texts_to_translate), max_workers=10)
+
+# ──────────────────────────────────────
+# 5. 主界面：讨论记录
+# ──────────────────────────────────────
+
 with st.expander("💬 查看完整讨论记录（已脱敏）", expanded=False):
-    global_history = log_data.get("global_history", [])
     current_round = 0
     for entry in global_history:
         if entry.get("role") in ["system", "moderator"]:
@@ -503,11 +615,16 @@ with st.expander("💬 查看完整讨论记录（已脱敏）", expanded=False)
         with st.chat_message(name=display_name, avatar=avatar):
             st.markdown(f"**{display_name}**")
             st.markdown(content)
+            # 从预先并行翻译的字典中快速读取
+            if enable_translation:
+                translated_content = translation_cache_dict.get(content, "")
+                if translated_content:
+                    st.info(f"**[中文翻译]**\n\n{translated_content}")
 
 st.divider()
 
 # ──────────────────────────────────────
-# 5. 按 Agent 分 Tab 的 CPSS 打分表单
+# 6. 按 Agent 分 Tab 的 CPSS 打分表单
 # ──────────────────────────────────────
 
 st.markdown("### 🏆 按 Agent 独立打分（CPSS 55 维双极语义量表）")
@@ -548,6 +665,11 @@ with st.form("human_cpss_form", clear_on_submit=False):
             st.markdown(f"#### {avatar} {info['display_name']} — 综合发言/创意提案")
             with st.container(border=True):
                 st.markdown(anonymized_idea)
+                # 从预先并行翻译的字典中快速读取
+                if enable_translation:
+                    translated_idea = translation_cache_dict.get(anonymized_idea, "")
+                    if translated_idea:
+                        st.success(f"**[中文翻译]**\n\n{translated_idea}")
 
             st.markdown("#### 📊 CPSS 55 维评分")
             st.caption("提示：每个维度需选择一个 1-7 整数；未填写项会在提交时阻断。")
@@ -587,7 +709,7 @@ with st.form("human_cpss_form", clear_on_submit=False):
         )
 
 # ──────────────────────────────────────
-# 6. 提交校验 + 写回 + 状态刷新
+# 7. 提交校验 + 写回 + 状态刷新
 # ──────────────────────────────────────
 
 if submitted:

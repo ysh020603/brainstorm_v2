@@ -12,8 +12,8 @@ cd "$SCRIPT_DIR"
 
 # ===== 配置区域 =====
 CONFIG="config/llm_config.json"
-MODELS="gemini-3-flash,gpt-5.4-mini,gpt-5.4-nano-2026-03-17,qwen2.5_14B"
-TOPIC="Features for a next-generation smartphone."
+MODELS="GLM-4.7,gpt-5.4-mini,gpt-5.4-nano-2026-03-17,qwen2.5_14B"
+TOPIC="Ideas to protect wildlife in cities."
 
 # # ===== 批量运行 =====
 # for MODE in brainwrite round_robin random; do
@@ -32,34 +32,34 @@ TOPIC="Features for a next-generation smartphone."
 # done
 
 # ===== 批量运行 =====
-for MODE in round_robin; do
-  for ROUNDS in 4; do
-    echo "=========================================="
-    echo "运行: mode=${MODE}, rounds=${ROUNDS}"
-    echo "=========================================="
-    python main_batch.py \
-      --config "$CONFIG" \
-      --models "$MODELS" \
-      --mode "$MODE" \
-      --rounds "$ROUNDS" \
-      --topic "$TOPIC"
-    echo ""
-  done
-done
-
-# # Leader-Worker 模式单独运行（需指定 leader_ids）
-# for ROUNDS in 4; do
-#   echo "=========================================="
-#   echo "运行: mode=leader_worker, rounds=${ROUNDS}"
-#   echo "=========================================="
-#   python main_batch.py \
-#     --config "$CONFIG" \
-#     --models "$MODELS" \
-#     --mode leader_worker \
-#     --rounds "$ROUNDS" \
-#     --topic "$TOPIC" \
-#     --leader_ids "[1]"
-#   echo ""
+# for MODE in brainwrite; do
+#   for ROUNDS in 4; do
+#     echo "=========================================="
+#     echo "运行: mode=${MODE}, rounds=${ROUNDS}"
+#     echo "=========================================="
+#     python main_batch.py \
+#       --config "$CONFIG" \
+#       --models "$MODELS" \
+#       --mode "$MODE" \
+#       --rounds "$ROUNDS" \
+#       --topic "$TOPIC"
+#     echo ""
+#   done
 # done
+
+# Leader-Worker 模式单独运行（需指定 leader_ids）
+for ROUNDS in 4; do
+  echo "=========================================="
+  echo "运行: mode=leader_worker, rounds=${ROUNDS}"
+  echo "=========================================="
+  python main_batch.py \
+    --config "$CONFIG" \
+    --models "$MODELS" \
+    --mode leader_worker \
+    --rounds "$ROUNDS" \
+    --topic "$TOPIC" \
+    --leader_ids "[1]"
+  echo ""
+done
 
 echo "全部批量测试完成！"
