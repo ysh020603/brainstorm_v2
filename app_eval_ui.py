@@ -7,6 +7,7 @@
 功能：
     - 用户登录与历史标注追踪
     - 实验日志脱敏展示（Agent 身份随机重映射）
+    - 并发调用大模型 API 对脱敏文本进行翻译（包含缓存机制）
     - 拖拽/下拉式排序标注
     - 标注结果持久化写入原 JSON（3port 字段）+ 用户日志
 """
@@ -15,16 +16,19 @@ import json
 import os
 import random
 import streamlit as st
+import openai
+import concurrent.futures
 from pathlib import Path
 from filelock import FileLock
+from typing import Any
 
 # ═══════════════════════════════════════════════════════════════
 # 后台配置项
 # ═══════════════════════════════════════════════════════════════
 
 TARGET_LOG_DIRS: list[str] = [
-    "log_human",
-    "log_human_2",
+    "/data2/brainstorm/brainstorm_v2/log_experiment/ex1_4LLM",
+    # "log_human_2",
 ]
 
 USER_LOG_DIR = "user_log"
@@ -39,6 +43,84 @@ MODE_LABELS = {
 
 AGENT_AVATARS = ["🔵", "🟢", "🟠", "🔴", "🟣", "🟡", "⚪", "🟤"]
 
+
+# ═══════════════════════════════════════════════════════════════
+# 翻译核心功能
+# ═══════════════════════════════════════════════════════════════
+
+def _single_translate(text: str) -> str:
+    """使用 DeepSeek API 进行单个文本翻译并禁用 reasoning_content"""
+    if not text or not text.strip():
+        return ""
+    
+    # 初始化 OpenAI Client
+    client = openai.OpenAI(
+        base_url="https://api.deepseek.com/v1",
+        api_key="sk-a81d0b1ef1cb4ad687c7a14f100113e3",
+    )
+    
+    call_kwargs: dict[str, Any] = {
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {
+                "role": "system", 
+                "content": "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。"
+            },
+            {"role": "user", "content": text}
+        ]
+    }
+    
+    # 强制关闭思考过程的逻辑
+    is_reasoning = False
+    if is_reasoning is False:
+        model_name = str(call_kwargs.get("model", ""))
+        model_name_l = model_name.lower()
+        if "kimi" in model_name_l:
+            # Kimi Instant Mode 通常要求 temperature=0.6
+            call_kwargs["temperature"] = 0.6
+            # Kimi 官方 API：用 thinking.type=disabled 关闭 reasoning_content；
+            # 同时兼容 vLLM/SGLang 模板变量 thinking=false。
+            call_kwargs["extra_body"] = {
+                "thinking": {"type": "disabled"},
+                "chat_template_kwargs": {"thinking": False},
+            }
+        elif "glm" in model_name_l or "deepseek" in model_name_l:
+            call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            call_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": False}
+            }
+
+    try:
+        response = client.chat.completions.create(**call_kwargs)
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"[翻译调用异常: {str(e)}]"
+
+
+@st.cache_data(show_spinner="首次加载该文件，正在并发翻译讨论记录中，请稍候...")
+def get_translated_history(_global_history: list, _anon_map: dict, file_id: str) -> dict:
+    """
+    并发翻译整个历史记录，并缓存结果。
+    通过 file_id 控制缓存，避免重复请求 API。
+    """
+    translations = {}
+    tasks = {}
+    
+    # 并发执行翻译任务
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        for idx, entry in enumerate(_global_history):
+            content = anonymize_content(entry["content"], _anon_map)
+            tasks[executor.submit(_single_translate, content)] = idx
+            
+        for future in concurrent.futures.as_completed(tasks):
+            idx = tasks[future]
+            try:
+                translations[idx] = future.result()
+            except Exception as e:
+                translations[idx] = f"[翻译失败: {e}]"
+                
+    return translations
 
 # ═══════════════════════════════════════════════════════════════
 # 工具函数
@@ -67,14 +149,35 @@ def save_user_history(user_name: str, annotated_files: set[str]):
         )
 
 
+def get_global_annotated_files() -> set[str]:
+    """遍历 user_log 目录，收集所有被任意用户标注过的文件。"""
+    global_annotated = set()
+    user_log_dir = BASE_DIR / USER_LOG_DIR
+    if user_log_dir.is_dir():
+        for history_file in user_log_dir.glob("*_history.json"):
+            try:
+                with open(history_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    global_annotated.update(data.get("annotated_files", []))
+            except Exception:
+                pass
+    return global_annotated
+
+
 def collect_log_files() -> list[str]:
-    """遍历配置的日志目录，收集所有 JSON 文件的相对路径。"""
+    """遍历配置的日志目录，递归深入子文件夹收集所有 JSON 文件的相对路径。"""
     files = []
     for log_dir in TARGET_LOG_DIRS:
         abs_dir = BASE_DIR / log_dir
         if not abs_dir.is_dir():
             continue
-        for json_file in sorted(abs_dir.glob("*.json")):
+        # 使用 rglob 深入每一个子文件夹进行匹配
+        for json_file in sorted(abs_dir.rglob("*.json")):
+            # 【新增逻辑】：排除名为 "leader_worker" 的文件夹
+            # json_file.parts 会将路径拆分为元组，例如 ('data2', 'brainstorm', ..., 'leader_worker', '1.json')
+            if "leader_worker" in json_file.parts:
+                continue
+                
             rel_path = str(json_file.relative_to(BASE_DIR))
             files.append(rel_path)
     return files
@@ -225,8 +328,19 @@ with st.sidebar:
     st.divider()
 
     annotated_set = load_user_history(user_name)
+    global_annotated_set = get_global_annotated_files()
     all_files = collect_log_files()
+    
+    # 当前用户还未标注的文件
     pending_files = [f for f in all_files if f not in annotated_set]
+    
+    # 自定义排序规则：
+    # 优先选择没有任何人标过的文件 (返回 0) 排在前面
+    # 其次选择被别人标过，但我没标过的文件 (返回 1) 排在后面
+    def pending_sort_key(filepath):
+        return 0 if filepath not in global_annotated_set else 1
+
+    pending_files.sort(key=pending_sort_key)
 
     st.metric("已标注", f"{len(annotated_set)} 个")
     st.metric("待标注", f"{len(pending_files)} 个")
@@ -239,10 +353,17 @@ with st.sidebar:
         st.info("当前没有待标注的文件。请等待新的实验数据。")
         st.stop()
 
+    def format_file_option(x):
+        base_name = os.path.basename(x) if "/" in x else x
+        # 增加视觉前缀，辅助使用者分辨
+        if x in global_annotated_set:
+            return f"[他人已标] {base_name}"
+        return f"[新] {base_name}"
+
     selected_file = st.selectbox(
         "选择待标注文件",
         pending_files,
-        format_func=lambda x: os.path.basename(x) if "/" in x else x,
+        format_func=format_file_option,
     )
 
 # ──────────────────────────────────────
@@ -268,7 +389,7 @@ st.info(f"**讨论话题：** {metadata['topic']}")
 st.divider()
 
 # ──────────────────────────────────────
-# 4. 对局内容展示（脱敏）
+# 4. 对局内容展示（脱敏 + 并发翻译）
 # ──────────────────────────────────────
 
 st.markdown("### 💬 讨论记录")
@@ -276,7 +397,10 @@ st.markdown("### 💬 讨论记录")
 global_history = log_data["global_history"]
 current_round = 0
 
-for entry in global_history:
+# 获取并缓存当前文件的翻译字典 {索引位置: 翻译文本}
+translated_history = get_translated_history(global_history, anon_map, selected_file)
+
+for idx, entry in enumerate(global_history):
     if entry["round"] != current_round:
         current_round = entry["round"]
         st.markdown(f"#### 第 {current_round} 轮")
@@ -286,11 +410,19 @@ for entry in global_history:
     display_name = info["display_name"]
     avatar = AGENT_AVATARS[(info["display_idx"] - 1) % len(AGENT_AVATARS)]
 
+    # 获取脱敏后的原文本
     content = anonymize_content(entry["content"], anon_map)
+    # 获取对应的翻译文本
+    zh_translation = translated_history.get(idx, "")
 
     with st.chat_message(name=display_name, avatar=avatar):
         st.markdown(f"**{display_name}**")
         st.markdown(content)
+        
+        # 附带展示翻译部分
+        if zh_translation:
+            st.caption("以下为系统自动翻译的内容：")
+            st.info(zh_translation)
 
 st.divider()
 

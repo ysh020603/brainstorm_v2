@@ -36,7 +36,7 @@ PROJECT_ROOT = BASE_DIR.parent
 # 待标注日志目录列表（绝对路径或相对于 PROJECT_ROOT 的相对路径）
 # 系统会递归扫描这些目录下所有 *.json 文件作为「总任务池」。
 TARGET_EVAL_DIRS: list[str] = [
-    "log",
+    "log_cpss_human",
 ]
 
 # 专属用户记录空间，与全局排序系统的 user_log/ 物理隔离

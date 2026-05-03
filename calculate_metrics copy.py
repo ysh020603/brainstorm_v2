@@ -26,8 +26,7 @@ from sentence_transformers import SentenceTransformer, util
 # FOLDER_ADDRESS = "log"
 FOLDER_ADDRESS = "/data2/brainstorm/brainstorm_v2/log_experiment/ex1_4LLM"
 N_GRAM_LIST = [1, 2]
-# 将模型名称替换为本地的绝对路径
-SBERT_MODEL_NAME = "/data2/brainstorm/brainstorm_v2/model"
+SBERT_MODEL_NAME = "all-MiniLM-L6-v2"
 OUTPUT_MODE = "overwrite"  # "overwrite" | "copy"
 
 # ===========================================================
@@ -293,7 +292,7 @@ def main():
         "--model",
         type=str,
         default=None,
-        help="Sentence-BERT 模型名称或本地路径（覆盖脚本内的 SBERT_MODEL_NAME）",
+        help="Sentence-BERT 模型名称（覆盖脚本内的 SBERT_MODEL_NAME）",
     )
     args = parser.parse_args()
 
@@ -301,24 +300,19 @@ def main():
     output_mode = args.output if args.output else OUTPUT_MODE
     model_name = args.model if args.model else SBERT_MODEL_NAME
 
-    # 设置 HF 镜像源以防万一模型没有下载全需要联网兜底
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
     if not os.path.isdir(folder):
         print(f"[ERROR] Folder not found: {folder}")
         return
 
-    # 遍历目标文件夹及其所有子文件夹，获取所有 .json 文件
-    json_files = []
-    for root, dirs, files in os.walk(folder):
-        for file in files:
-            if file.endswith(".json"):
-                json_files.append(os.path.join(root, file))
-    
-    json_files.sort()
-
+    # 优先匹配实验目录结构：<topic_dir>/brainwrite/*.json
+    json_files = sorted(glob.glob(os.path.join(folder, "**", "brainwrite", "*.json"), recursive=True))
+    # 兼容直接传入单个 brainwrite 目录的情况
     if not json_files:
-        print(f"[INFO] No JSON files found in {folder} or its subdirectories.")
+        json_files = sorted(glob.glob(os.path.join(folder, "*.json")))
+    if not json_files:
+        print(f"[INFO] No JSON files found in {folder}")
         return
 
     print(f"Loading Sentence-BERT model: {model_name} ...")
@@ -332,19 +326,16 @@ def main():
         out_folder = folder
 
     for filepath in json_files:
-        # 获取文件的相对路径，以便在 copy 模式下重构子目录结构
-        rel_path = os.path.relpath(filepath, folder)
-        
-        if output_mode == "copy":
-            out_path = os.path.join(out_folder, rel_path)
-            # 确保子文件夹存在
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        else:
-            out_path = filepath
-
-        print(f"  Processing: {rel_path} ... ", end="", flush=True)
+        filename = os.path.basename(filepath)
+        print(f"  Processing: {filename} ... ", end="", flush=True)
         try:
             updated = process_single_file(filepath, sbert_model, N_GRAM_LIST)
+            if output_mode == "copy":
+                rel_path = os.path.relpath(filepath, folder)
+                out_path = os.path.join(out_folder, rel_path)
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            else:
+                out_path = filepath
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(updated, f, ensure_ascii=False, indent=2)
             print("OK")
