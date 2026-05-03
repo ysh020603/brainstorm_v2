@@ -48,26 +48,51 @@ AGENT_AVATARS = ["🔵", "🟢", "🟠", "🔴", "🟣", "🟡", "⚪", "🟤"]
 # 翻译核心功能
 # ═══════════════════════════════════════════════════════════════
 
+# 辅助翻译 API 配置文件路径（被 .gitignore 屏蔽，凭 translation_config/example.json 创建）
+TRANSLATION_CONFIG_PATH = BASE_DIR / "translation_config" / "config.json"
+
+
+def _load_translation_config() -> dict[str, Any]:
+    """读取辅助翻译模块的 API 配置（base_url / api_key / model 等）。
+
+    若 config.json 不存在，将抛出 FileNotFoundError 并提示用户从 example.json 复制创建。
+    """
+    if not TRANSLATION_CONFIG_PATH.exists():
+        raise FileNotFoundError(
+            f"未找到辅助翻译配置文件 {TRANSLATION_CONFIG_PATH}。"
+            f"请复制 translation_config/example.json 为 config.json 并填写真实 API 凭据。"
+        )
+    with open(TRANSLATION_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def _single_translate(text: str) -> str:
-    """使用 DeepSeek API 进行单个文本翻译并禁用 reasoning_content"""
+    """使用配置文件指定的 LLM API 进行单个文本翻译并禁用 reasoning_content"""
     if not text or not text.strip():
         return ""
-    
-    # 初始化 OpenAI Client
+
+    try:
+        cfg = _load_translation_config()
+    except Exception as e:
+        return f"[翻译配置加载失败: {str(e)}]"
+
     client = openai.OpenAI(
-        base_url="https://api.deepseek.com/v1",
-        api_key="sk-a81d0b1ef1cb4ad687c7a14f100113e3",
+        base_url=cfg["base_url"],
+        api_key=cfg["api_key"],
     )
-    
+
     call_kwargs: dict[str, Any] = {
-        "model": "deepseek-v4-flash",
+        "model": cfg["model"],
         "messages": [
             {
-                "role": "system", 
-                "content": "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。"
+                "role": "system",
+                "content": cfg.get(
+                    "system_prompt",
+                    "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。",
+                ),
             },
-            {"role": "user", "content": text}
-        ]
+            {"role": "user", "content": text},
+        ],
     }
     
     # 强制关闭思考过程的逻辑
@@ -106,9 +131,14 @@ def get_translated_history(_global_history: list, _anon_map: dict, file_id: str)
     """
     translations = {}
     tasks = {}
-    
+
+    try:
+        max_workers = int(_load_translation_config().get("max_workers", 10))
+    except Exception:
+        max_workers = 10
+
     # 并发执行翻译任务
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         for idx, entry in enumerate(_global_history):
             content = anonymize_content(entry["content"], _anon_map)
             tasks[executor.submit(_single_translate, content)] = idx

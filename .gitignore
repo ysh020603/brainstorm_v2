@@ -42,6 +42,10 @@ config/llm_config_1.json
 config/llm_config_2.json
 config/cpss_eval_config.json
 
+# 辅助翻译模块的 API 配置：屏蔽真实 config，但保留 example.json
+translation_config/*
+!translation_config/example.json
+
 # Python bytecode / caches
 **/__pycache__/
 *.py[cod]

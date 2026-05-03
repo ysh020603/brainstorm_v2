@@ -117,27 +117,52 @@ CPSS_ITEMS: list[dict[str, Any]] = [
 # 新增功能：辅助翻译模块 (带 Streamlit 缓存避免重复消耗 API，支持多线程并行)
 # ═══════════════════════════════════════════════════════════════
 
+# 辅助翻译 API 配置文件路径（被 .gitignore 屏蔽，凭 translation_config/example.json 创建）
+TRANSLATION_CONFIG_PATH = PROJECT_ROOT / "translation_config" / "config.json"
+
+
+def _load_translation_config() -> dict[str, Any]:
+    """读取辅助翻译模块的 API 配置（base_url / api_key / model 等）。
+
+    若 config.json 不存在，将抛出 FileNotFoundError 并提示用户从 example.json 复制创建。
+    """
+    if not TRANSLATION_CONFIG_PATH.exists():
+        raise FileNotFoundError(
+            f"未找到辅助翻译配置文件 {TRANSLATION_CONFIG_PATH}。"
+            f"请复制 translation_config/example.json 为 config.json 并填写真实 API 凭据。"
+        )
+    with open(TRANSLATION_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 @st.cache_data(show_spinner=False)
 def _single_translate(text: str) -> str:
-    """使用 DeepSeek API 进行单个文本翻译并禁用 reasoning_content"""
+    """使用配置文件指定的 LLM API 进行单个文本翻译并禁用 reasoning_content"""
     if not text or not text.strip():
         return ""
-    
-    # 初始化 OpenAI Client
+
+    try:
+        cfg = _load_translation_config()
+    except Exception as e:
+        return f"[翻译配置加载失败: {str(e)}]"
+
     client = openai.OpenAI(
-        base_url="https://api.deepseek.com/v1",
-        api_key="sk-a81d0b1ef1cb4ad687c7a14f100113e3",
+        base_url=cfg["base_url"],
+        api_key=cfg["api_key"],
     )
-    
+
     call_kwargs: dict[str, Any] = {
-        "model": "deepseek-v4-flash",
+        "model": cfg["model"],
         "messages": [
             {
-                "role": "system", 
-                "content": "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。"
+                "role": "system",
+                "content": cfg.get(
+                    "system_prompt",
+                    "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。",
+                ),
             },
-            {"role": "user", "content": text}
-        ]
+            {"role": "user", "content": text},
+        ],
     }
     
     # 强制关闭思考过程的逻辑
@@ -168,12 +193,21 @@ def _single_translate(text: str) -> str:
         return f"[翻译调用异常: {str(e)}]"
 
 
-def parallel_translate(texts: list[str], max_workers: int = 10) -> dict[str, str]:
-    """多线程并行翻译列表中的所有文本，返回 原文->译文 的字典。"""
+def parallel_translate(texts: list[str], max_workers: int | None = None) -> dict[str, str]:
+    """多线程并行翻译列表中的所有文本，返回 原文->译文 的字典。
+
+    若未指定 max_workers，则从 translation_config/config.json 中读取（默认 10）。
+    """
     results = {}
     if not texts:
         return results
-        
+
+    if max_workers is None:
+        try:
+            max_workers = int(_load_translation_config().get("max_workers", 10))
+        except Exception:
+            max_workers = 10
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # 提交所有翻译任务
         future_to_text = {executor.submit(_single_translate, t): t for t in texts}
@@ -590,7 +624,7 @@ if enable_translation:
     if unique_texts_to_translate:
         # 单一加载动画，统一多线程并行翻译
         with st.spinner(f"正在多线程并行翻译 {len(unique_texts_to_translate)} 段内容，这可能需要几秒钟..."):
-            translation_cache_dict = parallel_translate(list(unique_texts_to_translate), max_workers=10)
+            translation_cache_dict = parallel_translate(list(unique_texts_to_translate))
 
 # ──────────────────────────────────────
 # 5. 主界面：讨论记录
