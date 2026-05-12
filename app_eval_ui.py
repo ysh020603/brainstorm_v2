@@ -9,12 +9,16 @@
     - 实验日志脱敏展示（Agent 身份随机重映射）
     - 并发调用大模型 API 对脱敏文本进行翻译（包含缓存机制）
     - 拖拽/下拉式排序标注
-    - 标注结果持久化写入原 JSON（3port 字段）+ 用户日志
+    - 智能推荐待标注文件（全局模式平衡、次数均衡、Hash 打散）
+    - 限定仅支持 round_robin 模式
+    - ELO 分数计算（支持历史记录首次初始化与增量更新）写入 user_log
 """
 
 import json
 import os
 import random
+import hashlib
+import collections
 import streamlit as st
 import openai
 import concurrent.futures
@@ -28,11 +32,15 @@ from typing import Any
 
 TARGET_LOG_DIRS: list[str] = [
     "/data2/brainstorm/brainstorm_v2/log_experiment/ex1_4LLM",
-    # "log_human_2",
 ]
 
 USER_LOG_DIR = "user_log"
 BASE_DIR = Path(__file__).resolve().parent
+GLOBAL_ELO_FILE = BASE_DIR / USER_LOG_DIR / "global_elo_scores.json"
+
+# ELO 配置
+INITIAL_ELO = 1200.0
+K_FACTOR = 32.0
 
 MODE_LABELS = {
     "brainwrite": "脑力书写 (BrainWrite)",
@@ -48,15 +56,9 @@ AGENT_AVATARS = ["🔵", "🟢", "🟠", "🔴", "🟣", "🟡", "⚪", "🟤"]
 # 翻译核心功能
 # ═══════════════════════════════════════════════════════════════
 
-# 辅助翻译 API 配置文件路径（被 .gitignore 屏蔽，凭 translation_config/example.json 创建）
 TRANSLATION_CONFIG_PATH = BASE_DIR / "translation_config" / "config.json"
 
-
 def _load_translation_config() -> dict[str, Any]:
-    """读取辅助翻译模块的 API 配置（base_url / api_key / model 等）。
-
-    若 config.json 不存在，将抛出 FileNotFoundError 并提示用户从 example.json 复制创建。
-    """
     if not TRANSLATION_CONFIG_PATH.exists():
         raise FileNotFoundError(
             f"未找到辅助翻译配置文件 {TRANSLATION_CONFIG_PATH}。"
@@ -65,56 +67,37 @@ def _load_translation_config() -> dict[str, Any]:
     with open(TRANSLATION_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def _single_translate(text: str) -> str:
-    """使用配置文件指定的 LLM API 进行单个文本翻译并禁用 reasoning_content"""
     if not text or not text.strip():
         return ""
-
     try:
         cfg = _load_translation_config()
     except Exception as e:
         return f"[翻译配置加载失败: {str(e)}]"
 
-    client = openai.OpenAI(
-        base_url=cfg["base_url"],
-        api_key=cfg["api_key"],
-    )
+    client = openai.OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"])
 
     call_kwargs: dict[str, Any] = {
         "model": cfg["model"],
         "messages": [
             {
                 "role": "system",
-                "content": cfg.get(
-                    "system_prompt",
-                    "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果，不要包含任何多余的解释或对话语。",
-                ),
+                "content": cfg.get("system_prompt", "你是一个专业的辅助翻译系统。请将用户提供的文本翻译成中文。保持专业、流畅，不改变原意。请直接输出翻译结果。"),
             },
             {"role": "user", "content": text},
         ],
     }
     
-    # 强制关闭思考过程的逻辑
     is_reasoning = False
     if is_reasoning is False:
-        model_name = str(call_kwargs.get("model", ""))
-        model_name_l = model_name.lower()
-        if "kimi" in model_name_l:
-            # Kimi Instant Mode 通常要求 temperature=0.6
+        model_name = str(call_kwargs.get("model", "")).lower()
+        if "kimi" in model_name:
             call_kwargs["temperature"] = 0.6
-            # Kimi 官方 API：用 thinking.type=disabled 关闭 reasoning_content；
-            # 同时兼容 vLLM/SGLang 模板变量 thinking=false。
-            call_kwargs["extra_body"] = {
-                "thinking": {"type": "disabled"},
-                "chat_template_kwargs": {"thinking": False},
-            }
-        elif "glm" in model_name_l or "deepseek" in model_name_l:
+            call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}, "chat_template_kwargs": {"thinking": False}}
+        elif "glm" in model_name or "deepseek" in model_name:
             call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         else:
-            call_kwargs["extra_body"] = {
-                "chat_template_kwargs": {"enable_thinking": False}
-            }
+            call_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
     try:
         response = client.chat.completions.create(**call_kwargs)
@@ -122,22 +105,15 @@ def _single_translate(text: str) -> str:
     except Exception as e:
         return f"[翻译调用异常: {str(e)}]"
 
-
 @st.cache_data(show_spinner="首次加载该文件，正在并发翻译讨论记录中，请稍候...")
 def get_translated_history(_global_history: list, _anon_map: dict, file_id: str) -> dict:
-    """
-    并发翻译整个历史记录，并缓存结果。
-    通过 file_id 控制缓存，避免重复请求 API。
-    """
     translations = {}
     tasks = {}
-
     try:
         max_workers = int(_load_translation_config().get("max_workers", 10))
     except Exception:
         max_workers = 10
 
-    # 并发执行翻译任务
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         for idx, entry in enumerate(_global_history):
             content = anonymize_content(entry["content"], _anon_map)
@@ -149,16 +125,14 @@ def get_translated_history(_global_history: list, _anon_map: dict, file_id: str)
                 translations[idx] = future.result()
             except Exception as e:
                 translations[idx] = f"[翻译失败: {e}]"
-                
     return translations
 
 # ═══════════════════════════════════════════════════════════════
-# 工具函数
+# 数据加载与 ELO 功能
 # ═══════════════════════════════════════════════════════════════
 
 def get_user_history_path(user_name: str) -> Path:
     return BASE_DIR / USER_LOG_DIR / f"{user_name}_history.json"
-
 
 def load_user_history(user_name: str) -> set[str]:
     path = get_user_history_path(user_name)
@@ -168,19 +142,45 @@ def load_user_history(user_name: str) -> set[str]:
         data = json.load(f)
     return set(data.get("annotated_files", []))
 
-
 def save_user_history(user_name: str, annotated_files: set[str]):
     path = get_user_history_path(user_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(
-            {"annotated_files": sorted(annotated_files)},
-            f, ensure_ascii=False, indent=2,
-        )
+        json.dump({"annotated_files": sorted(annotated_files)}, f, ensure_ascii=False, indent=2)
 
+def collect_log_files() -> list[str]:
+    files = []
+    for log_dir in TARGET_LOG_DIRS:
+        abs_dir = BASE_DIR / log_dir
+        if not abs_dir.is_dir():
+            continue
+        for json_file in sorted(abs_dir.rglob("*.json")):
+            if "leader_worker" in json_file.parts:
+                continue
+            files.append(str(json_file.relative_to(BASE_DIR)))
+    return files
 
-def get_global_annotated_files() -> set[str]:
-    """遍历 user_log 目录，收集所有被任意用户标注过的文件。"""
+def load_log_data(rel_path: str) -> dict:
+    with open(BASE_DIR / rel_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+@st.cache_data(show_spinner=False)
+def get_all_files_metadata(files: list[str]) -> dict[str, dict]:
+    """批量缓存并解析所有文件的 metadata，以供智能排序和过滤使用"""
+    meta_dict = {}
+    for f in files:
+        try:
+            abs_path = BASE_DIR / f
+            with open(abs_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+                meta_dict[f] = data.get("metadata", {})
+        except Exception:
+            meta_dict[f] = {}
+    return meta_dict
+
+def get_global_annotation_stats() -> tuple[dict[str, int], set[str]]:
+    """返回：{文件路径: 累计被标次数}, {被标过的文件全集}"""
+    global_file_counts = collections.defaultdict(int)
     global_annotated = set()
     user_log_dir = BASE_DIR / USER_LOG_DIR
     if user_log_dir.is_dir():
@@ -188,56 +188,96 @@ def get_global_annotated_files() -> set[str]:
             try:
                 with open(history_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    global_annotated.update(data.get("annotated_files", []))
+                    for file_path in data.get("annotated_files", []):
+                        global_file_counts[file_path] += 1
+                        global_annotated.add(file_path)
             except Exception:
                 pass
-    return global_annotated
+    return global_file_counts, global_annotated
 
-
-def collect_log_files() -> list[str]:
-    """遍历配置的日志目录，递归深入子文件夹收集所有 JSON 文件的相对路径。"""
-    files = []
-    for log_dir in TARGET_LOG_DIRS:
-        abs_dir = BASE_DIR / log_dir
-        if not abs_dir.is_dir():
-            continue
-        # 使用 rglob 深入每一个子文件夹进行匹配
-        for json_file in sorted(abs_dir.rglob("*.json")):
-            # 【新增逻辑】：排除名为 "leader_worker" 的文件夹
-            # json_file.parts 会将路径拆分为元组，例如 ('data2', 'brainstorm', ..., 'leader_worker', '1.json')
-            if "leader_worker" in json_file.parts:
+def _apply_elo_update(ranking_data: list[dict], elo_state: dict):
+    """核心 ELO 计算逻辑"""
+    models = elo_state.setdefault("models", {})
+    ranked_keys = [item["config_key"] for item in ranking_data]
+    
+    for key in ranked_keys:
+        if key not in models:
+            models[key] = {"elo": INITIAL_ELO, "appearances": 0}
+            
+    old_scores = {key: float(models[key]["elo"]) for key in ranked_keys}
+    rank_by_key = {item["config_key"]: item["rank"] for item in ranking_data}
+    
+    for model_i in ranked_keys:
+        delta_sum = 0.0
+        for model_j in ranked_keys:
+            if model_i == model_j:
                 continue
+            expected = 1.0 / (1.0 + 10 ** ((old_scores[model_j] - old_scores[model_i]) / 400.0))
+            actual = 1.0 if rank_by_key[model_i] < rank_by_key[model_j] else 0.0
+            delta_sum += actual - expected
+        
+        models[model_i]["elo"] = old_scores[model_i] + (K_FACTOR / 2.0) * delta_sum
+        models[model_i]["appearances"] += 1
+
+def init_global_elo_if_needed(all_valid_files: list[str]):
+    """如果 global_elo_scores.json 不存在，遍历历史文件重建 ELO 分数"""
+    if GLOBAL_ELO_FILE.exists():
+        return
+        
+    GLOBAL_ELO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    elo_state = {"models": {}}
+    
+    user_log_dir = BASE_DIR / USER_LOG_DIR
+    if user_log_dir.is_dir():
+        for history_file in user_log_dir.glob("*_history.json"):
+            user_name = history_file.name.replace("_history.json", "")
+            try:
+                with open(history_file, "r", encoding="utf-8") as f:
+                    h_data = json.load(f)
+                for rel_path in h_data.get("annotated_files", []):
+                    if rel_path not in all_valid_files:
+                        continue # 忽略已经被过滤掉的非 round_robin 文件
+                    abs_path = BASE_DIR / rel_path
+                    with open(abs_path, "r", encoding="utf-8") as lf:
+                        log_data = json.load(lf)
+                    
+                    if "3port" in log_data and user_name in log_data["3port"]:
+                        _apply_elo_update(log_data["3port"][user_name], elo_state)
+            except Exception:
+                pass
                 
-            rel_path = str(json_file.relative_to(BASE_DIR))
-            files.append(rel_path)
-    return files
+    with open(GLOBAL_ELO_FILE, "w", encoding="utf-8") as f:
+        json.dump(elo_state, f, ensure_ascii=False, indent=2)
 
+def update_and_save_elo(ranking_results: list[dict]):
+    """增量更新并保存 ELO 分数"""
+    lock_path = str(GLOBAL_ELO_FILE) + ".lock"
+    with FileLock(lock_path, timeout=10):
+        if GLOBAL_ELO_FILE.exists():
+            with open(GLOBAL_ELO_FILE, "r", encoding="utf-8") as f:
+                elo_state = json.load(f)
+        else:
+            elo_state = {"models": {}}
+            
+        _apply_elo_update(ranking_results, elo_state)
+        
+        with open(GLOBAL_ELO_FILE, "w", encoding="utf-8") as f:
+            json.dump(elo_state, f, ensure_ascii=False, indent=2)
 
-def load_log_data(rel_path: str) -> dict:
-    abs_path = BASE_DIR / rel_path
-    with open(abs_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
+# ═══════════════════════════════════════════════════════════════
+# 工具函数 (脱敏与校验)
+# ═══════════════════════════════════════════════════════════════
 
 def _extract_config_key(agent: dict) -> str:
-    """兼容不同版本日志中的身份标识字段（config_key / name / position）。"""
     if "config_key" in agent:
         return agent["config_key"]
     if "name" in agent:
         return agent["name"]
     return str(agent.get("position", agent["agent_id"]))
 
-
 def build_anonymization_map(log_data: dict, seed: str) -> dict[int, dict]:
-    """
-    构建脱敏映射表。使用确定性种子保证同一文件、同一用户
-    每次打开看到的映射始终一致。
-
-    返回 {原始 agent_id: {display_name, display_idx, config_key, type, original_agent_name}}
-    """
     agents = log_data["metadata"]["agents"]
     n = len(agents)
-
     rng = random.Random(seed)
     display_indices = list(range(1, n + 1))
     rng.shuffle(display_indices)
@@ -254,56 +294,37 @@ def build_anonymization_map(log_data: dict, seed: str) -> dict[int, dict]:
         }
     return mapping
 
-
 def anonymize_content(content: str, anon_map: dict[int, dict]) -> str:
-    """将消息正文中出现的原始 Agent 名称替换为脱敏后的名称。"""
     sorted_ids = sorted(anon_map.keys(), reverse=True)
-
     placeholders = {}
     for orig_id in sorted_ids:
         orig_name = anon_map[orig_id]["original_agent_name"]
         placeholder = f"\x00ANON{orig_id}\x00"
         placeholders[orig_id] = placeholder
         content = content.replace(orig_name, placeholder)
-
     for orig_id in sorted_ids:
         content = content.replace(placeholders[orig_id], anon_map[orig_id]["display_name"])
-
     return content
 
-
 def validate_strict_total_order(rankings: dict[str, int], n: int) -> tuple[bool, str]:
-    """严格全序校验：排名值必须恰好构成 {1, 2, ..., N} 且无重复。"""
     rank_values = list(rankings.values())
     expected = set(range(1, n + 1))
     if set(rank_values) != expected:
-        duplicates = sorted({v for v in rank_values if rank_values.count(v) > 1})
-        missing = sorted(expected - set(rank_values))
-        parts = []
-        if duplicates:
-            parts.append(f"存在重复排名 {duplicates}")
-        if missing:
-            parts.append(f"缺少排名 {missing}")
-        return False, "；".join(parts)
+        return False, "排名不满足严格全序"
     return True, ""
 
-
 def save_annotation(rel_path: str, user_name: str, ranking_results: list[dict]):
-    """将标注结果写入原 JSON 文件的 3port 字段，使用文件锁防止并发覆盖。"""
     abs_path = BASE_DIR / rel_path
     lock_path = str(abs_path) + ".lock"
 
     with FileLock(lock_path, timeout=10):
         with open(abs_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-
         if "3port" not in data:
             data["3port"] = {}
         data["3port"][user_name] = ranking_results
-
         with open(abs_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-
 
 # ═══════════════════════════════════════════════════════════════
 # Streamlit 页面
@@ -326,9 +347,7 @@ if not st.session_state.logged_in:
 
     col_input, col_btn = st.columns([3, 1])
     with col_input:
-        name_input = st.text_input(
-            "User Name", placeholder="例如：Senhao", label_visibility="collapsed",
-        )
+        name_input = st.text_input("User Name", placeholder="例如：Senhao", label_visibility="collapsed")
     with col_btn:
         login_clicked = st.button("确认登录", type="primary", use_container_width=True)
 
@@ -343,10 +362,46 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ──────────────────────────────────────
-# 2. 侧边栏：用户信息 + 文件选择
+# 2. 侧边栏：核心智能排序与文件分配
 # ──────────────────────────────────────
 
 user_name: str = st.session_state.user_name
+
+# 加载并过滤数据：只允许 round_robin
+_all_collected_files = collect_log_files()
+_file_meta_dict = get_all_files_metadata(_all_collected_files)
+all_valid_files = [f for f in _all_collected_files if _file_meta_dict.get(f, {}).get("mode") == "round_robin"]
+
+# 初始化 ELO 历史记录（如需要补偿计算）
+init_global_elo_if_needed(all_valid_files)
+
+# 统计全局状态以支持智能推荐
+global_file_counts, global_annotated_set = get_global_annotation_stats()
+annotated_set = load_user_history(user_name)
+
+# 统计 Topic 频率 (在已标注数据中的出现频次，用于保持平衡)
+topic_counts = collections.defaultdict(int)
+for f, count in global_file_counts.items():
+    topic = _file_meta_dict.get(f, {}).get("topic", "Unknown")
+    topic_counts[topic] += count
+
+pending_files = [f for f in all_valid_files if f not in annotated_set]
+
+# 核心排序算法：多维度计分优先级排序
+def smart_pending_sort_key(filepath):
+    meta = _file_meta_dict.get(filepath, {})
+    topic = meta.get("topic", "Unknown")
+    
+    # 优先级1: 该文件全局被标注的总次数 (越少越先推荐)
+    f_count = global_file_counts.get(filepath, 0)
+    # 优先级2: 该 Topic 全局被标注的总次数 (越少越先推荐，实现均衡)
+    t_count = topic_counts.get(topic, 0)
+    # 优先级3: 稳定的 Hash 散列 (相同次数下随机打散，防止扎堆同一个文件夹)
+    hash_val = int(hashlib.md5(filepath.encode('utf-8')).hexdigest()[:8], 16)
+    
+    return (f_count, t_count, hash_val)
+
+pending_files.sort(key=smart_pending_sort_key)
 
 with st.sidebar:
     st.markdown(f"### 👤 {user_name}")
@@ -356,45 +411,24 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-
-    annotated_set = load_user_history(user_name)
-    global_annotated_set = get_global_annotated_files()
-    all_files = collect_log_files()
-    
-    # 当前用户还未标注的文件
-    pending_files = [f for f in all_files if f not in annotated_set]
-    
-    # 自定义排序规则：
-    # 优先选择没有任何人标过的文件 (返回 0) 排在前面
-    # 其次选择被别人标过，但我没标过的文件 (返回 1) 排在后面
-    def pending_sort_key(filepath):
-        return 0 if filepath not in global_annotated_set else 1
-
-    pending_files.sort(key=pending_sort_key)
-
-    st.metric("已标注", f"{len(annotated_set)} 个")
-    st.metric("待标注", f"{len(pending_files)} 个")
-
+    st.metric("已标注 (限定 RoundRobin)", f"{len(annotated_set)} 个")
+    st.metric("待标注 (限定 RoundRobin)", f"{len(pending_files)} 个")
     st.divider()
 
     if not pending_files:
         st.success("🎉 所有文件已标注完成！")
         st.title("📋 头脑风暴第三方标注系统")
-        st.info("当前没有待标注的文件。请等待新的实验数据。")
+        st.info("当前没有待标注的 round_robin 文件。请等待新的实验数据。")
         st.stop()
 
     def format_file_option(x):
         base_name = os.path.basename(x) if "/" in x else x
-        # 增加视觉前缀，辅助使用者分辨
-        if x in global_annotated_set:
-            return f"[他人已标] {base_name}"
-        return f"[新] {base_name}"
+        topic = _file_meta_dict.get(x, {}).get("topic", "未知主题")[:15] + "..." # 截断显示
+        
+        prefix = "[他人已标]" if x in global_annotated_set else "[新数据]"
+        return f"{prefix} [{topic}] {base_name}"
 
-    selected_file = st.selectbox(
-        "选择待标注文件",
-        pending_files,
-        format_func=format_file_option,
-    )
+    selected_file = st.selectbox("选择待标注文件 (已按缺口智能排序)", pending_files, format_func=format_file_option)
 
 # ──────────────────────────────────────
 # 3. 数据加载与脱敏
@@ -408,13 +442,12 @@ anon_map = build_anonymization_map(log_data, seed)
 
 st.title("📋 头脑风暴第三方标注系统")
 
-# 文件元信息
 st.markdown(f"**当前文件：** `{selected_file}`")
 meta_cols = st.columns(3)
 meta_cols[0].metric("讨论模式", MODE_LABELS.get(metadata["mode"], metadata["mode"]))
 meta_cols[1].metric("总轮数", metadata["max_rounds"])
 meta_cols[2].metric("参与人数", metadata["total_agents"])
-st.info(f"**讨论话题：** {metadata['topic']}")
+st.info(f"**讨论话题：** {metadata.get('topic', 'N/A')}")
 
 st.divider()
 
@@ -423,11 +456,8 @@ st.divider()
 # ──────────────────────────────────────
 
 st.markdown("### 💬 讨论记录")
-
 global_history = log_data["global_history"]
 current_round = 0
-
-# 获取并缓存当前文件的翻译字典 {索引位置: 翻译文本}
 translated_history = get_translated_history(global_history, anon_map, selected_file)
 
 for idx, entry in enumerate(global_history):
@@ -440,16 +470,12 @@ for idx, entry in enumerate(global_history):
     display_name = info["display_name"]
     avatar = AGENT_AVATARS[(info["display_idx"] - 1) % len(AGENT_AVATARS)]
 
-    # 获取脱敏后的原文本
     content = anonymize_content(entry["content"], anon_map)
-    # 获取对应的翻译文本
     zh_translation = translated_history.get(idx, "")
 
     with st.chat_message(name=display_name, avatar=avatar):
         st.markdown(f"**{display_name}**")
         st.markdown(content)
-        
-        # 附带展示翻译部分
         if zh_translation:
             st.caption("以下为系统自动翻译的内容：")
             st.info(zh_translation)
@@ -457,44 +483,29 @@ for idx, entry in enumerate(global_history):
 st.divider()
 
 # ──────────────────────────────────────
-# 5. 排序标注模块（联动交换机制，参考 app.py / app_multiplayer.py）
+# 5. 排序标注模块（联动交换机制）
 # ──────────────────────────────────────
 
 display_agents = sorted(anon_map.items(), key=lambda x: x[1]["display_idx"])
 n_agents = len(display_agents)
 rank_options = list(range(1, n_agents + 1))
-
-# display_name 列表，用于联动交换时索引
 _eval_agent_names = [info["display_name"] for _, info in display_agents]
 
-
 def _init_eval_ranking_state():
-    """初始化排名 session_state，每个 Agent 默认分配不同名次。"""
-    if "eval_ranking_selections" not in st.session_state or \
-       st.session_state.get("_eval_ranking_file") != selected_file:
+    if "eval_ranking_selections" not in st.session_state or st.session_state.get("_eval_ranking_file") != selected_file:
         st.session_state._eval_ranking_file = selected_file
-        st.session_state.eval_ranking_selections = {
-            name: idx + 1 for idx, name in enumerate(_eval_agent_names)
-        }
-
+        st.session_state.eval_ranking_selections = {name: idx + 1 for idx, name in enumerate(_eval_agent_names)}
 
 def _on_eval_rank_change(agent_name: str):
-    """排名下拉框回调：当用户更改某个 Agent 的排名时，自动交换冲突名次。
-
-    同时同步更新被交换 Agent 对应的 widget key，确保 UI 联动生效。
-    """
     new_rank = st.session_state[f"eval_rank_{agent_name}"]
     sel = st.session_state.eval_ranking_selections
     old_rank = sel.get(agent_name)
-
     for name, r in sel.items():
         if name != agent_name and r == new_rank:
             sel[name] = old_rank
             st.session_state[f"eval_rank_{name}"] = old_rank
             break
-
     sel[agent_name] = new_rank
-
 
 _init_eval_ranking_state()
 
@@ -526,13 +537,10 @@ with submit_col:
 
 if submitted:
     rankings = st.session_state.eval_ranking_selections
-
     valid, err_msg = validate_strict_total_order(rankings, n_agents)
+    
     if not valid:
-        st.error(
-            f"⚠️ 排名无效！请为每位 Agent 分配从 1 到 {n_agents} 的不重复名次，"
-            "不允许并列排名。请重新调整后再提交。"
-        )
+        st.error(f"⚠️ 排名无效！请为每位 Agent 分配从 1 到 {n_agents} 的不重复名次。")
     else:
         reverse_map = {
             info["display_name"]: {"position": orig_id, "config_key": info["config_key"]}
@@ -549,16 +557,17 @@ if submitted:
             })
 
         try:
+            # 1. 写入原数据 json 3port 字段
             save_annotation(selected_file, user_name, ranking_results)
+            # 2. ELO 分数增量更新写入 user_log
+            update_and_save_elo(ranking_results)
+            # 3. 记录已标注集合
+            annotated_set.add(selected_file)
+            save_user_history(user_name, annotated_set)
+            
+            del st.session_state["eval_ranking_selections"]
+            del st.session_state["_eval_ranking_file"]
+            st.success("✅ 标注已提交且 ELO 分数已更新！页面即将刷新...")
+            st.rerun()
         except Exception as e:
-            st.error(f"写入标注结果失败：{e}")
-            st.stop()
-
-        annotated_set.add(selected_file)
-        save_user_history(user_name, annotated_set)
-
-        del st.session_state["eval_ranking_selections"]
-        del st.session_state["_eval_ranking_file"]
-
-        st.success("✅ 标注已提交！页面即将刷新...")
-        st.rerun()
+            st.error(f"写入标注或 ELO 更新失败：{e}")

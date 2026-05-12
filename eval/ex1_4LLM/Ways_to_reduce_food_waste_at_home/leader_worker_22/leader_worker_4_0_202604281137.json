@@ -1,0 +1,536 @@
+{
+  "metadata": {
+    "mode": "leader_worker",
+    "topic": "Ways to reduce food waste at home.",
+    "max_rounds": 4,
+    "total_agents": 4,
+    "human_count": 0,
+    "timestamp": "2026-04-28T11:37:00.793733",
+    "agents": [
+      {
+        "agent_id": 1,
+        "config_key": "gpt-5.4-mini",
+        "type": "llm",
+        "role_background": "",
+        "model": "gpt-5.4-mini",
+        "temperature": 0.7,
+        "top_p": null,
+        "max_tokens": null
+      },
+      {
+        "agent_id": 2,
+        "config_key": "DeepSeek-V4-flash",
+        "type": "llm",
+        "role_background": "",
+        "model": "deepseek-v4-flash",
+        "temperature": 0.7,
+        "top_p": null,
+        "max_tokens": null
+      },
+      {
+        "agent_id": 3,
+        "config_key": "Qwen3-32B-nothinking",
+        "type": "llm",
+        "role_background": "",
+        "model": "Qwen-32B",
+        "temperature": 0.7,
+        "top_p": null,
+        "max_tokens": null
+      },
+      {
+        "agent_id": 4,
+        "config_key": "Qwen3-32B-thinking",
+        "type": "llm",
+        "role_background": "",
+        "model": "Qwen-32B",
+        "temperature": 0.7,
+        "top_p": null,
+        "max_tokens": null
+      }
+    ],
+    "position_map": [
+      {
+        "position": 1,
+        "config_key": "gpt-5.4-mini",
+        "type": "llm",
+        "model": "gpt-5.4-mini"
+      },
+      {
+        "position": 2,
+        "config_key": "DeepSeek-V4-flash",
+        "type": "llm",
+        "model": "deepseek-v4-flash"
+      },
+      {
+        "position": 3,
+        "config_key": "Qwen3-32B-nothinking",
+        "type": "llm",
+        "model": "Qwen-32B"
+      },
+      {
+        "position": 4,
+        "config_key": "Qwen3-32B-thinking",
+        "type": "llm",
+        "model": "Qwen-32B"
+      }
+    ]
+  },
+  "global_history": [
+    {
+      "round": 1,
+      "agent_id": 1,
+      "agent_name": "Agent 1",
+      "config_key": "gpt-5.4-mini",
+      "content": "A practical way to reduce food waste at home is to manage food with a “use-first” system: keep older items at the front of the fridge and pantry, and store new groceries behind them. Meal planning also helps a lot—if you plan meals around what you already have, you buy less extra food. Another useful habit is freezing leftovers in single portions, so they can be eaten later instead of thrown away. Finally, understanding date labels can prevent unnecessary waste; many foods are still safe after “best before” dates if they look, smell, and taste normal.",
+      "metric": {
+        "distinct_1": 0.8265,
+        "distinct_2": 1.0,
+        "entropy_1": 6.237,
+        "entropy_2": 6.5999,
+        "sbert_sim_to_topic": 0.6864,
+        "max_bleu": 0.0
+      }
+    },
+    {
+      "round": 1,
+      "agent_id": 2,
+      "agent_name": "Agent 2",
+      "config_key": "DeepSeek-V4-flash",
+      "content": "One practical way to reduce food waste at home is to implement a \"weekly meal prep and inventory check.\" Before shopping, take 10 minutes to list what you already have in the fridge and pantry, then plan meals around those items. This prevents buying duplicates and ensures older ingredients are used first.",
+      "metric": {
+        "distinct_1": 0.9231,
+        "distinct_2": 1.0,
+        "entropy_1": 5.5176,
+        "entropy_2": 5.6724,
+        "sbert_sim_to_topic": 0.7508,
+        "max_bleu": 0.0
+      }
+    },
+    {
+      "round": 1,
+      "agent_id": 3,
+      "agent_name": "Agent 3",
+      "config_key": "Qwen3-32B-nothinking",
+      "content": "A creative way to reduce food waste at home is to turn near-expiry ingredients into a “creative challenge meal” once a week. For example, designate a night where the only items allowed on the menu are those that are close to expiring or would otherwise go unused. This encourages inventive cooking, adds fun to mealtime, and ensures that ingredients get used before they spoil. Combining this with a “food rescue jar” can further help—place small, leftover portions of herbs, spices, or sauces into a labeled jar and use them together in future meals or sauces. This approach not only minimizes waste but also reduces the need for small, frequent purchases of specialty items.",
+      "metric": {
+        "distinct_1": 0.7478,
+        "distinct_2": 0.9737,
+        "entropy_1": 6.2561,
+        "entropy_2": 6.7803,
+        "sbert_sim_to_topic": 0.6111,
+        "max_bleu": 0.0931
+      }
+    },
+    {
+      "round": 1,
+      "agent_id": 4,
+      "agent_name": "Agent 4",
+      "config_key": "Qwen3-32B-thinking",
+      "content": "A creative approach to minimizing food waste is to adopt a “leftover transformation ritual,” where household members collaboratively repurpose scraps and near-expired ingredients into new meals. For example, stale bread becomes croutons, vegetable peels make stock, and surplus fruits turn into homemade jams or compotes. Pair this with a “mystery basket challenge” once a month, where everyone blindly selects items set to expire and invents a dish using those ingredients—turning waste prevention into a fun, bonding activity. Additionally, labeling containers with emojis (e.g., a clock for “use within 2 days”) can make expiration tracking visually engaging, especially for children.",
+      "metric": {
+        "distinct_1": 0.8137,
+        "distinct_2": 1.0,
+        "entropy_1": 6.1953,
+        "entropy_2": 6.6582,
+        "sbert_sim_to_topic": 0.4673,
+        "max_bleu": 0.0085
+      }
+    },
+    {
+      "round": 2,
+      "agent_id": 1,
+      "agent_name": "Agent 1",
+      "config_key": "gpt-5.4-mini",
+      "content": "Building on those ideas, I’d add a simple “reset day” each week: check the fridge, then sort items into three groups—eat now, freeze, or transform. This makes the creative challenge meal and leftover ritual easier to follow. Also, keep a small “rescue shelf” for ingredients nearing expiry, so they are visible and used first. For families, a visual reminder system like color stickers or emojis can help everyone spot what needs attention without extra effort.",
+      "metric": {
+        "distinct_1": 0.9221,
+        "distinct_2": 1.0,
+        "entropy_1": 6.1011,
+        "entropy_2": 6.2479,
+        "sbert_sim_to_topic": 0.3333,
+        "max_bleu": 0.0129
+      }
+    },
+    {
+      "round": 2,
+      "agent_id": 2,
+      "agent_name": "Agent 2",
+      "config_key": "DeepSeek-V4-flash",
+      "content": "Building on the \"creative challenge meal\" and \"mystery basket\" ideas, I suggest adding a \"digital share board\" app for your household. When you identify an ingredient you won't use in time, post it on a shared list (e.g., \"half an onion, use by tomorrow\"). Family members can claim it for their own meals or snacks, preventing waste through real-time collaboration—no need to wait for a weekly challenge. This turns waste reduction into a daily, team-based habit.",
+      "metric": {
+        "distinct_1": 0.8395,
+        "distinct_2": 1.0,
+        "entropy_1": 5.9849,
+        "entropy_2": 6.3219,
+        "sbert_sim_to_topic": 0.4817,
+        "max_bleu": 0.0152
+      }
+    },
+    {
+      "round": 2,
+      "agent_id": 3,
+      "agent_name": "Agent 3",
+      "config_key": "Qwen3-32B-nothinking",
+      "content": "A creative extension of these ideas is to implement a “food passport” system in households with multiple people. Each item that enters the fridge or pantry gets a small, reusable label with the date and a simple emoji tracking its status (e.g., 🟢 fresh, 🟡 use soon, 🔴 last chance). Family members can update the emoji as they use or check the item, making it a shared, interactive way to manage food. To make it more engaging, assign points or small rewards for using items marked with 🟡 or 🔴, encouraging mindful consumption and reinforcing the habit of checking before discarding. This gamified approach turns food waste reduction into a proactive, fun, and collaborative effort.",
+      "metric": {
+        "distinct_1": 0.7658,
+        "distinct_2": 1.0,
+        "entropy_1": 6.1986,
+        "entropy_2": 6.7814,
+        "sbert_sim_to_topic": 0.4544,
+        "max_bleu": 0.045
+      }
+    },
+    {
+      "round": 2,
+      "agent_id": 4,
+      "agent_name": "Agent 4",
+      "config_key": "Qwen3-32B-thinking",
+      "content": "A novel strategy is to introduce a “Culinary Quest” during weekly reset days: assign a themed challenge (e.g., “Mediterranean Night” or “Spice Box Revival”) and require household members to craft a meal using only ingredients from the rescue shelf and pantry staples. To amplify creativity, include a “wildcard” rule—e.g., one item must be used in a non-traditional way (e.g., using overripe bananas for a savory sauce). To track progress, pair this with a “waste journal” app that logs what’s used, transforms into, and saved, generating monthly waste-reduction stats and recipe ideas. For added engagement, introduce a “rotating chef” role where each family member leads the quest, fostering ownership and culinary experimentation. This turns waste reduction into a dynamic, educational ritual.",
+      "metric": {
+        "distinct_1": 0.748,
+        "distinct_2": 0.9683,
+        "entropy_1": 6.3029,
+        "entropy_2": 6.9078,
+        "sbert_sim_to_topic": 0.4805,
+        "max_bleu": 0.055
+      }
+    },
+    {
+      "round": 3,
+      "agent_id": 1,
+      "agent_name": "Agent 1",
+      "config_key": "gpt-5.4-mini",
+      "content": "A strong addition is a shared “food passport” with emoji status labels and a rotating chef role. It makes ownership clear and keeps everyone aware of what needs using up. I’d combine that with a weekly Culinary Quest: one themed meal from the rescue shelf and pantry, plus one wildcard ingredient used creatively. A simple waste journal can track what gets saved and show progress over time, which helps build the habit.",
+      "metric": {
+        "distinct_1": 0.8493,
+        "distinct_2": 1.0,
+        "entropy_1": 5.8116,
+        "entropy_2": 6.1699,
+        "sbert_sim_to_topic": 0.2865,
+        "max_bleu": 0.0664
+      }
+    },
+    {
+      "round": 3,
+      "agent_id": 2,
+      "agent_name": "Agent 2",
+      "config_key": "DeepSeek-V4-flash",
+      "content": "To complement the gamified \"food passport\" and \"Culinary Quest\" ideas, I propose a \"Swap Shelf\" in a common area—like a small bin or tray—where family members place any ingredient they cannot use before it spoils. Others can freely take and use it for their own meals or challenges. This creates a low-effort, continuous sharing loop that prevents waste between planned events, and can be tracked with a simple tally to see how many items were rescued each week. It turns passive leftovers into active community resources.",
+      "metric": {
+        "distinct_1": 0.8652,
+        "distinct_2": 1.0,
+        "entropy_1": 6.1485,
+        "entropy_2": 6.4594,
+        "sbert_sim_to_topic": 0.4008,
+        "max_bleu": 0.0789
+      }
+    },
+    {
+      "round": 3,
+      "agent_id": 3,
+      "agent_name": "Agent 3",
+      "config_key": "Qwen3-32B-nothinking",
+      "content": "A creative enhancement to the “Swap Shelf” and “Culinary Quest” systems is to introduce a “Rescue Recipe Library.” Each time a family member uses an item from the Swap Shelf or creates a dish during the Culinary Quest, they document the recipe in a shared digital or physical notebook. Over time, this builds a personalized collection of waste-reducing recipes that can be reused, refined, and shared. To make it more engaging, assign recipe categories like “Hero Ingredient” (e.g., “Carrot Rescue Stew”) or “Mystery Basket Challenge” to highlight the creativity behind each dish. This not only preserves useful ideas but also turns food waste reduction into a long-term, evolving tradition.",
+      "metric": {
+        "distinct_1": 0.7411,
+        "distinct_2": 0.973,
+        "entropy_1": 6.1576,
+        "entropy_2": 6.7404,
+        "sbert_sim_to_topic": 0.3556,
+        "max_bleu": 0.1187
+      }
+    },
+    {
+      "round": 3,
+      "agent_id": 4,
+      "agent_name": "Agent 4",
+      "config_key": "Qwen3-32B-thinking",
+      "content": "A creative enhancement is to turn the “Swap Shelf” and “Culinary Quest” into a **“Food Rescue League”** with levels and badges. Assign points for each rescued item (e.g., +1 for croutons from stale bread, +3 for transforming vegetable scraps into a stock). Households can earn titles like “Novice Rescuer” or “Master Chef Explorer” based on milestones (e.g., 10 items saved in a month). Pair this with a **“rotating mission board”**—a digital or physical space where family members post creative uses for near-expired items (e.g., “Can anyone make a dessert with these overripe peaches?”). For a twist, introduce a **“blind box challenge”** once a month: randomly assign three ingredients from the Swap Shelf and a theme (e.g., “International Cuisine”) to spark improvisation. Track progress in the waste journal app, which could generate visual reports (e.g., “You saved 4 lbs of food this month!”). This gamified system turns waste reduction into a collaborative, achievement-driven habit while fostering creativity and shared responsibility.",
+      "metric": {
+        "distinct_1": 0.7066,
+        "distinct_2": 0.9398,
+        "entropy_1": 6.5716,
+        "entropy_2": 7.2283,
+        "sbert_sim_to_topic": 0.3706,
+        "max_bleu": 0.0801
+      }
+    },
+    {
+      "round": 4,
+      "agent_id": 1,
+      "agent_name": "Agent 1",
+      "config_key": "gpt-5.4-mini",
+      "content": "A useful extension is to pair the Food Rescue League with a Rescue Recipe Library. The league adds motivation through points, badges, and a mission board, while the library captures the best ideas so they can be repeated and improved. I’d also keep the blind box challenge monthly to keep it fun, but make the main goal practical: use up near-expiry ingredients, document what worked, and build a growing set of reliable rescue recipes.",
+      "metric": {
+        "distinct_1": 0.7895,
+        "distinct_2": 1.0,
+        "entropy_1": 5.7082,
+        "entropy_2": 6.2288,
+        "sbert_sim_to_topic": 0.2875,
+        "max_bleu": 0.04
+      }
+    },
+    {
+      "round": 4,
+      "agent_id": 2,
+      "agent_name": "Agent 2",
+      "config_key": "DeepSeek-V4-flash",
+      "content": "To further elevate the \"Food Rescue League\" and \"Rescue Recipe Library,\" I suggest adding a \"Virtual Potluck\" component. Once a month, family members can vote on a favorite rescued recipe from the library, then everyone cooks that dish simultaneously—even via video call if apart. This transforms individual achievements into shared celebrations, reinforces the library's value, and provides real-time feedback to improve recipes. It turns waste reduction into a recurring, social highlight that strengthens family bonds while saving food.",
+      "metric": {
+        "distinct_1": 0.8148,
+        "distinct_2": 0.9875,
+        "entropy_1": 5.9261,
+        "entropy_2": 6.2969,
+        "sbert_sim_to_topic": 0.3501,
+        "max_bleu": 0.1033
+      }
+    },
+    {
+      "round": 4,
+      "agent_id": 3,
+      "agent_name": "Agent 3",
+      "config_key": "Qwen3-32B-nothinking",
+      "content": "A creative next step is to integrate a “Food Rescue Calendar” into the Food Rescue League and Virtual Potluck systems. This calendar would highlight each day’s rescue mission—such as using up herbs, dairy, or root vegetables—aligning with inventory checks and meal plans. It can also mark recurring events like the monthly blind box challenge and Virtual Potluck, ensuring consistency and anticipation. To boost engagement, allow family members to suggest and schedule rescue themes, turning food waste prevention into a dynamic, participatory ritual that evolves with household needs and preferences.",
+      "metric": {
+        "distinct_1": 0.7826,
+        "distinct_2": 0.967,
+        "entropy_1": 5.9825,
+        "entropy_2": 6.4419,
+        "sbert_sim_to_topic": 0.3872,
+        "max_bleu": 0.0653
+      }
+    },
+    {
+      "round": 4,
+      "agent_id": 4,
+      "agent_name": "Agent 4",
+      "config_key": "Qwen3-32B-thinking",
+      "content": "A creative next step is to launch a **“Recipe Remix Challenge”** where each month, a top recipe from the Rescue Recipe Library is selected for a family-wide remix. Participants must adapt the base recipe using at least one unconventional ingredient (e.g., stale crackers as a crust, roasted coffee grounds as a spice rub) or a new dietary constraint (e.g., vegan, gluten-free). The remixed dishes are then featured in a **“Taste Test Showdown”** during the Virtual Potluck, with votes determining a “Chef Innovator of the Month.” To document this evolution, create a **“Recipe Evolution Tree”**—a visual chart or digital timeline tracking how the original recipe transformed over time, highlighting creative adaptations and family favorites. This adds a layer of storytelling to food rescue, turning the library into a living archive of culinary innovation while reinforcing the habit of repurposing ingredients. Pair this with a **“Golden Recipe Award”** for the most impactful remix (e.g., saved the most food or inspired new ideas), which earns double points in the Food Rescue League. This approach deepens engagement, celebrates creativity, and ensures rescued recipes remain dynamic and inspiring.",
+      "metric": {
+        "distinct_1": 0.6667,
+        "distinct_2": 0.9681,
+        "entropy_1": 6.562,
+        "entropy_2": 7.4867,
+        "sbert_sim_to_topic": 0.183,
+        "max_bleu": 0.0402
+      }
+    }
+  ],
+  "final_messages": {
+    "1": [
+      {
+        "role": "system",
+        "content": "You are participating in a brainstorming discussion.\nNumber of participants: 4\nDiscussion topic: Ways to reduce food waste at home.\n\n- Before making your statement, please carefully read the statements of other participants.\n- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n- Only produce rigorous statements; do not generate other content or introduce yourself.\n- Keep your statements concise, to the point, and strictly within 500 words."
+      },
+      {
+        "role": "user",
+        "content": "Please speak first and share your views and thoughts on the discussion topic. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A practical way to reduce food waste at home is to manage food with a “use-first” system: keep older items at the front of the fridge and pantry, and store new groceries behind them. Meal planning also helps a lot—if you plan meals around what you already have, you buy less extra food. Another useful habit is freezing leftovers in single portions, so they can be eaten later instead of thrown away. Finally, understanding date labels can prevent unnecessary waste; many foods are still safe after “best before” dates if they look, smell, and taste normal."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative way to reduce food waste at home is to turn near-expiry ingredients into a “creative challenge meal” once a week. For example, designate a night where the only items allowed on the menu are those that are close to expiring or would otherwise go unused. This encourages inventive cooking, adds fun to mealtime, and ensures that ingredients get used before they spoil. Combining this with a “food rescue jar” can further help—place small, leftover portions of herbs, spices, or sauces into a labeled jar and use them together in future meals or sauces. This approach not only minimizes waste but also reduces the need for small, frequent purchases of specialty items.\n- Agent 4 say: A creative approach to minimizing food waste is to adopt a “leftover transformation ritual,” where household members collaboratively repurpose scraps and near-expired ingredients into new meals. For example, stale bread becomes croutons, vegetable peels make stock, and surplus fruits turn into homemade jams or compotes. Pair this with a “mystery basket challenge” once a month, where everyone blindly selects items set to expire and invents a dish using those ingredients—turning waste prevention into a fun, bonding activity. Additionally, labeling containers with emojis (e.g., a clock for “use within 2 days”) can make expiration tracking visually engaging, especially for children.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "Building on those ideas, I’d add a simple “reset day” each week: check the fridge, then sort items into three groups—eat now, freeze, or transform. This makes the creative challenge meal and leftover ritual easier to follow. Also, keep a small “rescue shelf” for ingredients nearing expiry, so they are visible and used first. For families, a visual reminder system like color stickers or emojis can help everyone spot what needs attention without extra effort."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative extension of these ideas is to implement a “food passport” system in households with multiple people. Each item that enters the fridge or pantry gets a small, reusable label with the date and a simple emoji tracking its status (e.g., 🟢 fresh, 🟡 use soon, 🔴 last chance). Family members can update the emoji as they use or check the item, making it a shared, interactive way to manage food. To make it more engaging, assign points or small rewards for using items marked with 🟡 or 🔴, encouraging mindful consumption and reinforcing the habit of checking before discarding. This gamified approach turns food waste reduction into a proactive, fun, and collaborative effort.\n- Agent 4 say: A novel strategy is to introduce a “Culinary Quest” during weekly reset days: assign a themed challenge (e.g., “Mediterranean Night” or “Spice Box Revival”) and require household members to craft a meal using only ingredients from the rescue shelf and pantry staples. To amplify creativity, include a “wildcard” rule—e.g., one item must be used in a non-traditional way (e.g., using overripe bananas for a savory sauce). To track progress, pair this with a “waste journal” app that logs what’s used, transforms into, and saved, generating monthly waste-reduction stats and recipe ideas. For added engagement, introduce a “rotating chef” role where each family member leads the quest, fostering ownership and culinary experimentation. This turns waste reduction into a dynamic, educational ritual.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A strong addition is a shared “food passport” with emoji status labels and a rotating chef role. It makes ownership clear and keeps everyone aware of what needs using up. I’d combine that with a weekly Culinary Quest: one themed meal from the rescue shelf and pantry, plus one wildcard ingredient used creatively. A simple waste journal can track what gets saved and show progress over time, which helps build the habit."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative enhancement to the “Swap Shelf” and “Culinary Quest” systems is to introduce a “Rescue Recipe Library.” Each time a family member uses an item from the Swap Shelf or creates a dish during the Culinary Quest, they document the recipe in a shared digital or physical notebook. Over time, this builds a personalized collection of waste-reducing recipes that can be reused, refined, and shared. To make it more engaging, assign recipe categories like “Hero Ingredient” (e.g., “Carrot Rescue Stew”) or “Mystery Basket Challenge” to highlight the creativity behind each dish. This not only preserves useful ideas but also turns food waste reduction into a long-term, evolving tradition.\n- Agent 4 say: A creative enhancement is to turn the “Swap Shelf” and “Culinary Quest” into a **“Food Rescue League”** with levels and badges. Assign points for each rescued item (e.g., +1 for croutons from stale bread, +3 for transforming vegetable scraps into a stock). Households can earn titles like “Novice Rescuer” or “Master Chef Explorer” based on milestones (e.g., 10 items saved in a month). Pair this with a **“rotating mission board”**—a digital or physical space where family members post creative uses for near-expired items (e.g., “Can anyone make a dessert with these overripe peaches?”). For a twist, introduce a **“blind box challenge”** once a month: randomly assign three ingredients from the Swap Shelf and a theme (e.g., “International Cuisine”) to spark improvisation. Track progress in the waste journal app, which could generate visual reports (e.g., “You saved 4 lbs of food this month!”). This gamified system turns waste reduction into a collaborative, achievement-driven habit while fostering creativity and shared responsibility.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A useful extension is to pair the Food Rescue League with a Rescue Recipe Library. The league adds motivation through points, badges, and a mission board, while the library captures the best ideas so they can be repeated and improved. I’d also keep the blind box challenge monthly to keep it fun, but make the main goal practical: use up near-expiry ingredients, document what worked, and build a growing set of reliable rescue recipes."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative next step is to integrate a “Food Rescue Calendar” into the Food Rescue League and Virtual Potluck systems. This calendar would highlight each day’s rescue mission—such as using up herbs, dairy, or root vegetables—aligning with inventory checks and meal plans. It can also mark recurring events like the monthly blind box challenge and Virtual Potluck, ensuring consistency and anticipation. To boost engagement, allow family members to suggest and schedule rescue themes, turning food waste prevention into a dynamic, participatory ritual that evolves with household needs and preferences.\n- Agent 4 say: A creative next step is to launch a **“Recipe Remix Challenge”** where each month, a top recipe from the Rescue Recipe Library is selected for a family-wide remix. Participants must adapt the base recipe using at least one unconventional ingredient (e.g., stale crackers as a crust, roasted coffee grounds as a spice rub) or a new dietary constraint (e.g., vegan, gluten-free). The remixed dishes are then featured in a **“Taste Test Showdown”** during the Virtual Potluck, with votes determining a “Chef Innovator of the Month.” To document this evolution, create a **“Recipe Evolution Tree”**—a visual chart or digital timeline tracking how the original recipe transformed over time, highlighting creative adaptations and family favorites. This adds a layer of storytelling to food rescue, turning the library into a living archive of culinary innovation while reinforcing the habit of repurposing ingredients. Pair this with a **“Golden Recipe Award”** for the most impactful remix (e.g., saved the most food or inspired new ideas), which earns double points in the Food Rescue League. This approach deepens engagement, celebrates creativity, and ensures rescued recipes remain dynamic and inspiring.\nPlease respond based on the above new information. Be concise. Please in English."
+      }
+    ],
+    "2": [
+      {
+        "role": "system",
+        "content": "You are participating in a brainstorming discussion.\nNumber of participants: 4\nDiscussion topic: Ways to reduce food waste at home.\n\n- Before making your statement, please carefully read the statements of other participants.\n- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n- Only produce rigorous statements; do not generate other content or introduce yourself.\n- Keep your statements concise, to the point, and strictly within 500 words."
+      },
+      {
+        "role": "user",
+        "content": "Please speak first and share your views and thoughts on the discussion topic. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "One practical way to reduce food waste at home is to implement a \"weekly meal prep and inventory check.\" Before shopping, take 10 minutes to list what you already have in the fridge and pantry, then plan meals around those items. This prevents buying duplicates and ensures older ingredients are used first."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative way to reduce food waste at home is to turn near-expiry ingredients into a “creative challenge meal” once a week. For example, designate a night where the only items allowed on the menu are those that are close to expiring or would otherwise go unused. This encourages inventive cooking, adds fun to mealtime, and ensures that ingredients get used before they spoil. Combining this with a “food rescue jar” can further help—place small, leftover portions of herbs, spices, or sauces into a labeled jar and use them together in future meals or sauces. This approach not only minimizes waste but also reduces the need for small, frequent purchases of specialty items.\n- Agent 4 say: A creative approach to minimizing food waste is to adopt a “leftover transformation ritual,” where household members collaboratively repurpose scraps and near-expired ingredients into new meals. For example, stale bread becomes croutons, vegetable peels make stock, and surplus fruits turn into homemade jams or compotes. Pair this with a “mystery basket challenge” once a month, where everyone blindly selects items set to expire and invents a dish using those ingredients—turning waste prevention into a fun, bonding activity. Additionally, labeling containers with emojis (e.g., a clock for “use within 2 days”) can make expiration tracking visually engaging, especially for children.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "Building on the \"creative challenge meal\" and \"mystery basket\" ideas, I suggest adding a \"digital share board\" app for your household. When you identify an ingredient you won't use in time, post it on a shared list (e.g., \"half an onion, use by tomorrow\"). Family members can claim it for their own meals or snacks, preventing waste through real-time collaboration—no need to wait for a weekly challenge. This turns waste reduction into a daily, team-based habit."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative extension of these ideas is to implement a “food passport” system in households with multiple people. Each item that enters the fridge or pantry gets a small, reusable label with the date and a simple emoji tracking its status (e.g., 🟢 fresh, 🟡 use soon, 🔴 last chance). Family members can update the emoji as they use or check the item, making it a shared, interactive way to manage food. To make it more engaging, assign points or small rewards for using items marked with 🟡 or 🔴, encouraging mindful consumption and reinforcing the habit of checking before discarding. This gamified approach turns food waste reduction into a proactive, fun, and collaborative effort.\n- Agent 4 say: A novel strategy is to introduce a “Culinary Quest” during weekly reset days: assign a themed challenge (e.g., “Mediterranean Night” or “Spice Box Revival”) and require household members to craft a meal using only ingredients from the rescue shelf and pantry staples. To amplify creativity, include a “wildcard” rule—e.g., one item must be used in a non-traditional way (e.g., using overripe bananas for a savory sauce). To track progress, pair this with a “waste journal” app that logs what’s used, transforms into, and saved, generating monthly waste-reduction stats and recipe ideas. For added engagement, introduce a “rotating chef” role where each family member leads the quest, fostering ownership and culinary experimentation. This turns waste reduction into a dynamic, educational ritual.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "To complement the gamified \"food passport\" and \"Culinary Quest\" ideas, I propose a \"Swap Shelf\" in a common area—like a small bin or tray—where family members place any ingredient they cannot use before it spoils. Others can freely take and use it for their own meals or challenges. This creates a low-effort, continuous sharing loop that prevents waste between planned events, and can be tracked with a simple tally to see how many items were rescued each week. It turns passive leftovers into active community resources."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative enhancement to the “Swap Shelf” and “Culinary Quest” systems is to introduce a “Rescue Recipe Library.” Each time a family member uses an item from the Swap Shelf or creates a dish during the Culinary Quest, they document the recipe in a shared digital or physical notebook. Over time, this builds a personalized collection of waste-reducing recipes that can be reused, refined, and shared. To make it more engaging, assign recipe categories like “Hero Ingredient” (e.g., “Carrot Rescue Stew”) or “Mystery Basket Challenge” to highlight the creativity behind each dish. This not only preserves useful ideas but also turns food waste reduction into a long-term, evolving tradition.\n- Agent 4 say: A creative enhancement is to turn the “Swap Shelf” and “Culinary Quest” into a **“Food Rescue League”** with levels and badges. Assign points for each rescued item (e.g., +1 for croutons from stale bread, +3 for transforming vegetable scraps into a stock). Households can earn titles like “Novice Rescuer” or “Master Chef Explorer” based on milestones (e.g., 10 items saved in a month). Pair this with a **“rotating mission board”**—a digital or physical space where family members post creative uses for near-expired items (e.g., “Can anyone make a dessert with these overripe peaches?”). For a twist, introduce a **“blind box challenge”** once a month: randomly assign three ingredients from the Swap Shelf and a theme (e.g., “International Cuisine”) to spark improvisation. Track progress in the waste journal app, which could generate visual reports (e.g., “You saved 4 lbs of food this month!”). This gamified system turns waste reduction into a collaborative, achievement-driven habit while fostering creativity and shared responsibility.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "To further elevate the \"Food Rescue League\" and \"Rescue Recipe Library,\" I suggest adding a \"Virtual Potluck\" component. Once a month, family members can vote on a favorite rescued recipe from the library, then everyone cooks that dish simultaneously—even via video call if apart. This transforms individual achievements into shared celebrations, reinforces the library's value, and provides real-time feedback to improve recipes. It turns waste reduction into a recurring, social highlight that strengthens family bonds while saving food."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 3 say: A creative next step is to integrate a “Food Rescue Calendar” into the Food Rescue League and Virtual Potluck systems. This calendar would highlight each day’s rescue mission—such as using up herbs, dairy, or root vegetables—aligning with inventory checks and meal plans. It can also mark recurring events like the monthly blind box challenge and Virtual Potluck, ensuring consistency and anticipation. To boost engagement, allow family members to suggest and schedule rescue themes, turning food waste prevention into a dynamic, participatory ritual that evolves with household needs and preferences.\n- Agent 4 say: A creative next step is to launch a **“Recipe Remix Challenge”** where each month, a top recipe from the Rescue Recipe Library is selected for a family-wide remix. Participants must adapt the base recipe using at least one unconventional ingredient (e.g., stale crackers as a crust, roasted coffee grounds as a spice rub) or a new dietary constraint (e.g., vegan, gluten-free). The remixed dishes are then featured in a **“Taste Test Showdown”** during the Virtual Potluck, with votes determining a “Chef Innovator of the Month.” To document this evolution, create a **“Recipe Evolution Tree”**—a visual chart or digital timeline tracking how the original recipe transformed over time, highlighting creative adaptations and family favorites. This adds a layer of storytelling to food rescue, turning the library into a living archive of culinary innovation while reinforcing the habit of repurposing ingredients. Pair this with a **“Golden Recipe Award”** for the most impactful remix (e.g., saved the most food or inspired new ideas), which earns double points in the Food Rescue League. This approach deepens engagement, celebrates creativity, and ensures rescued recipes remain dynamic and inspiring.\nPlease respond based on the above new information. Be concise. Please in English."
+      }
+    ],
+    "3": [
+      {
+        "role": "system",
+        "content": "You are participating in a brainstorming discussion.\nNumber of participants: 4\nDiscussion topic: Ways to reduce food waste at home.\n\n- Before making your statement, please carefully read the statements of other participants.\n- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n- Only produce rigorous statements; do not generate other content or introduce yourself.\n- Keep your statements concise, to the point, and strictly within 500 words."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: A practical way to reduce food waste at home is to manage food with a “use-first” system: keep older items at the front of the fridge and pantry, and store new groceries behind them. Meal planning also helps a lot—if you plan meals around what you already have, you buy less extra food. Another useful habit is freezing leftovers in single portions, so they can be eaten later instead of thrown away. Finally, understanding date labels can prevent unnecessary waste; many foods are still safe after “best before” dates if they look, smell, and taste normal.\n- Agent 2 say: One practical way to reduce food waste at home is to implement a \"weekly meal prep and inventory check.\" Before shopping, take 10 minutes to list what you already have in the fridge and pantry, then plan meals around those items. This prevents buying duplicates and ensures older ingredients are used first.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative way to reduce food waste at home is to turn near-expiry ingredients into a “creative challenge meal” once a week. For example, designate a night where the only items allowed on the menu are those that are close to expiring or would otherwise go unused. This encourages inventive cooking, adds fun to mealtime, and ensures that ingredients get used before they spoil. Combining this with a “food rescue jar” can further help—place small, leftover portions of herbs, spices, or sauces into a labeled jar and use them together in future meals or sauces. This approach not only minimizes waste but also reduces the need for small, frequent purchases of specialty items."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: Building on those ideas, I’d add a simple “reset day” each week: check the fridge, then sort items into three groups—eat now, freeze, or transform. This makes the creative challenge meal and leftover ritual easier to follow. Also, keep a small “rescue shelf” for ingredients nearing expiry, so they are visible and used first. For families, a visual reminder system like color stickers or emojis can help everyone spot what needs attention without extra effort.\n- Agent 2 say: Building on the \"creative challenge meal\" and \"mystery basket\" ideas, I suggest adding a \"digital share board\" app for your household. When you identify an ingredient you won't use in time, post it on a shared list (e.g., \"half an onion, use by tomorrow\"). Family members can claim it for their own meals or snacks, preventing waste through real-time collaboration—no need to wait for a weekly challenge. This turns waste reduction into a daily, team-based habit.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative extension of these ideas is to implement a “food passport” system in households with multiple people. Each item that enters the fridge or pantry gets a small, reusable label with the date and a simple emoji tracking its status (e.g., 🟢 fresh, 🟡 use soon, 🔴 last chance). Family members can update the emoji as they use or check the item, making it a shared, interactive way to manage food. To make it more engaging, assign points or small rewards for using items marked with 🟡 or 🔴, encouraging mindful consumption and reinforcing the habit of checking before discarding. This gamified approach turns food waste reduction into a proactive, fun, and collaborative effort."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: A strong addition is a shared “food passport” with emoji status labels and a rotating chef role. It makes ownership clear and keeps everyone aware of what needs using up. I’d combine that with a weekly Culinary Quest: one themed meal from the rescue shelf and pantry, plus one wildcard ingredient used creatively. A simple waste journal can track what gets saved and show progress over time, which helps build the habit.\n- Agent 2 say: To complement the gamified \"food passport\" and \"Culinary Quest\" ideas, I propose a \"Swap Shelf\" in a common area—like a small bin or tray—where family members place any ingredient they cannot use before it spoils. Others can freely take and use it for their own meals or challenges. This creates a low-effort, continuous sharing loop that prevents waste between planned events, and can be tracked with a simple tally to see how many items were rescued each week. It turns passive leftovers into active community resources.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative enhancement to the “Swap Shelf” and “Culinary Quest” systems is to introduce a “Rescue Recipe Library.” Each time a family member uses an item from the Swap Shelf or creates a dish during the Culinary Quest, they document the recipe in a shared digital or physical notebook. Over time, this builds a personalized collection of waste-reducing recipes that can be reused, refined, and shared. To make it more engaging, assign recipe categories like “Hero Ingredient” (e.g., “Carrot Rescue Stew”) or “Mystery Basket Challenge” to highlight the creativity behind each dish. This not only preserves useful ideas but also turns food waste reduction into a long-term, evolving tradition."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: A useful extension is to pair the Food Rescue League with a Rescue Recipe Library. The league adds motivation through points, badges, and a mission board, while the library captures the best ideas so they can be repeated and improved. I’d also keep the blind box challenge monthly to keep it fun, but make the main goal practical: use up near-expiry ingredients, document what worked, and build a growing set of reliable rescue recipes.\n- Agent 2 say: To further elevate the \"Food Rescue League\" and \"Rescue Recipe Library,\" I suggest adding a \"Virtual Potluck\" component. Once a month, family members can vote on a favorite rescued recipe from the library, then everyone cooks that dish simultaneously—even via video call if apart. This transforms individual achievements into shared celebrations, reinforces the library's value, and provides real-time feedback to improve recipes. It turns waste reduction into a recurring, social highlight that strengthens family bonds while saving food.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative next step is to integrate a “Food Rescue Calendar” into the Food Rescue League and Virtual Potluck systems. This calendar would highlight each day’s rescue mission—such as using up herbs, dairy, or root vegetables—aligning with inventory checks and meal plans. It can also mark recurring events like the monthly blind box challenge and Virtual Potluck, ensuring consistency and anticipation. To boost engagement, allow family members to suggest and schedule rescue themes, turning food waste prevention into a dynamic, participatory ritual that evolves with household needs and preferences."
+      }
+    ],
+    "4": [
+      {
+        "role": "system",
+        "content": "You are participating in a brainstorming discussion.\nNumber of participants: 4\nDiscussion topic: Ways to reduce food waste at home.\n\n- Before making your statement, please carefully read the statements of other participants.\n- Based on the discussion topic and existing statements, provide your contribution to demonstrate your **creativity**.\n- Only produce rigorous statements; do not generate other content or introduce yourself.\n- Keep your statements concise, to the point, and strictly within 500 words."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: A practical way to reduce food waste at home is to manage food with a “use-first” system: keep older items at the front of the fridge and pantry, and store new groceries behind them. Meal planning also helps a lot—if you plan meals around what you already have, you buy less extra food. Another useful habit is freezing leftovers in single portions, so they can be eaten later instead of thrown away. Finally, understanding date labels can prevent unnecessary waste; many foods are still safe after “best before” dates if they look, smell, and taste normal.\n- Agent 2 say: One practical way to reduce food waste at home is to implement a \"weekly meal prep and inventory check.\" Before shopping, take 10 minutes to list what you already have in the fridge and pantry, then plan meals around those items. This prevents buying duplicates and ensures older ingredients are used first.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative approach to minimizing food waste is to adopt a “leftover transformation ritual,” where household members collaboratively repurpose scraps and near-expired ingredients into new meals. For example, stale bread becomes croutons, vegetable peels make stock, and surplus fruits turn into homemade jams or compotes. Pair this with a “mystery basket challenge” once a month, where everyone blindly selects items set to expire and invents a dish using those ingredients—turning waste prevention into a fun, bonding activity. Additionally, labeling containers with emojis (e.g., a clock for “use within 2 days”) can make expiration tracking visually engaging, especially for children."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: Building on those ideas, I’d add a simple “reset day” each week: check the fridge, then sort items into three groups—eat now, freeze, or transform. This makes the creative challenge meal and leftover ritual easier to follow. Also, keep a small “rescue shelf” for ingredients nearing expiry, so they are visible and used first. For families, a visual reminder system like color stickers or emojis can help everyone spot what needs attention without extra effort.\n- Agent 2 say: Building on the \"creative challenge meal\" and \"mystery basket\" ideas, I suggest adding a \"digital share board\" app for your household. When you identify an ingredient you won't use in time, post it on a shared list (e.g., \"half an onion, use by tomorrow\"). Family members can claim it for their own meals or snacks, preventing waste through real-time collaboration—no need to wait for a weekly challenge. This turns waste reduction into a daily, team-based habit.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A novel strategy is to introduce a “Culinary Quest” during weekly reset days: assign a themed challenge (e.g., “Mediterranean Night” or “Spice Box Revival”) and require household members to craft a meal using only ingredients from the rescue shelf and pantry staples. To amplify creativity, include a “wildcard” rule—e.g., one item must be used in a non-traditional way (e.g., using overripe bananas for a savory sauce). To track progress, pair this with a “waste journal” app that logs what’s used, transforms into, and saved, generating monthly waste-reduction stats and recipe ideas. For added engagement, introduce a “rotating chef” role where each family member leads the quest, fostering ownership and culinary experimentation. This turns waste reduction into a dynamic, educational ritual."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: A strong addition is a shared “food passport” with emoji status labels and a rotating chef role. It makes ownership clear and keeps everyone aware of what needs using up. I’d combine that with a weekly Culinary Quest: one themed meal from the rescue shelf and pantry, plus one wildcard ingredient used creatively. A simple waste journal can track what gets saved and show progress over time, which helps build the habit.\n- Agent 2 say: To complement the gamified \"food passport\" and \"Culinary Quest\" ideas, I propose a \"Swap Shelf\" in a common area—like a small bin or tray—where family members place any ingredient they cannot use before it spoils. Others can freely take and use it for their own meals or challenges. This creates a low-effort, continuous sharing loop that prevents waste between planned events, and can be tracked with a simple tally to see how many items were rescued each week. It turns passive leftovers into active community resources.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative enhancement is to turn the “Swap Shelf” and “Culinary Quest” into a **“Food Rescue League”** with levels and badges. Assign points for each rescued item (e.g., +1 for croutons from stale bread, +3 for transforming vegetable scraps into a stock). Households can earn titles like “Novice Rescuer” or “Master Chef Explorer” based on milestones (e.g., 10 items saved in a month). Pair this with a **“rotating mission board”**—a digital or physical space where family members post creative uses for near-expired items (e.g., “Can anyone make a dessert with these overripe peaches?”). For a twist, introduce a **“blind box challenge”** once a month: randomly assign three ingredients from the Swap Shelf and a theme (e.g., “International Cuisine”) to spark improvisation. Track progress in the waste journal app, which could generate visual reports (e.g., “You saved 4 lbs of food this month!”). This gamified system turns waste reduction into a collaborative, achievement-driven habit while fostering creativity and shared responsibility."
+      },
+      {
+        "role": "user",
+        "content": "Here is the newly received information:\n- Agent 1 say: A useful extension is to pair the Food Rescue League with a Rescue Recipe Library. The league adds motivation through points, badges, and a mission board, while the library captures the best ideas so they can be repeated and improved. I’d also keep the blind box challenge monthly to keep it fun, but make the main goal practical: use up near-expiry ingredients, document what worked, and build a growing set of reliable rescue recipes.\n- Agent 2 say: To further elevate the \"Food Rescue League\" and \"Rescue Recipe Library,\" I suggest adding a \"Virtual Potluck\" component. Once a month, family members can vote on a favorite rescued recipe from the library, then everyone cooks that dish simultaneously—even via video call if apart. This transforms individual achievements into shared celebrations, reinforces the library's value, and provides real-time feedback to improve recipes. It turns waste reduction into a recurring, social highlight that strengthens family bonds while saving food.\nPlease respond based on the above new information. Be concise. Please in English."
+      },
+      {
+        "role": "assistant",
+        "content": "A creative next step is to launch a **“Recipe Remix Challenge”** where each month, a top recipe from the Rescue Recipe Library is selected for a family-wide remix. Participants must adapt the base recipe using at least one unconventional ingredient (e.g., stale crackers as a crust, roasted coffee grounds as a spice rub) or a new dietary constraint (e.g., vegan, gluten-free). The remixed dishes are then featured in a **“Taste Test Showdown”** during the Virtual Potluck, with votes determining a “Chef Innovator of the Month.” To document this evolution, create a **“Recipe Evolution Tree”**—a visual chart or digital timeline tracking how the original recipe transformed over time, highlighting creative adaptations and family favorites. This adds a layer of storytelling to food rescue, turning the library into a living archive of culinary innovation while reinforcing the habit of repurposing ingredients. Pair this with a **“Golden Recipe Award”** for the most impactful remix (e.g., saved the most food or inspired new ideas), which earns double points in the Food Rescue League. This approach deepens engagement, celebrates creativity, and ensures rescued recipes remain dynamic and inspiring."
+      }
+    ]
+  },
+  "agent_metrics": [
+    {
+      "agent_id": 1,
+      "position": 1,
+      "config_key": "gpt-5.4-mini",
+      "avg_metrics": {
+        "avg_distinct_1": 0.8468,
+        "avg_distinct_2": 1.0,
+        "avg_entropy_1": 5.9645,
+        "avg_entropy_2": 6.3116,
+        "avg_sbert_sim_to_topic": 0.3984,
+        "avg_max_bleu": 0.0298
+      }
+    },
+    {
+      "agent_id": 2,
+      "position": 2,
+      "config_key": "DeepSeek-V4-flash",
+      "avg_metrics": {
+        "avg_distinct_1": 0.8607,
+        "avg_distinct_2": 0.9969,
+        "avg_entropy_1": 5.8943,
+        "avg_entropy_2": 6.1876,
+        "avg_sbert_sim_to_topic": 0.4959,
+        "avg_max_bleu": 0.0493
+      }
+    },
+    {
+      "agent_id": 3,
+      "position": 3,
+      "config_key": "Qwen3-32B-nothinking",
+      "avg_metrics": {
+        "avg_distinct_1": 0.7593,
+        "avg_distinct_2": 0.9784,
+        "avg_entropy_1": 6.1487,
+        "avg_entropy_2": 6.686,
+        "avg_sbert_sim_to_topic": 0.4521,
+        "avg_max_bleu": 0.0805
+      }
+    },
+    {
+      "agent_id": 4,
+      "position": 4,
+      "config_key": "Qwen3-32B-thinking",
+      "avg_metrics": {
+        "avg_distinct_1": 0.7338,
+        "avg_distinct_2": 0.969,
+        "avg_entropy_1": 6.4079,
+        "avg_entropy_2": 7.0702,
+        "avg_sbert_sim_to_topic": 0.3753,
+        "avg_max_bleu": 0.046
+      }
+    }
+  ]
+}
